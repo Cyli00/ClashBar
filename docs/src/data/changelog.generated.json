@@ -2,6 +2,104 @@
   "ok": true,
   "releases": [
     {
+      "version": "v0.3.6",
+      "summary": "本次更新是针对 v0.3.5 的 **系统代理 Helper 安装修复**：修复从 `.dmg` 下载安装的场景下，管理员授权装入的 Helper 二进制与 LaunchDaemon plist 仍带 `com.apple.quarantine` 隔离属性、被系统以「Launch Constraint Violation / Refusing to execute quarantined file」拒绝加载，导致「Helper 已授权但系统代理开关开了不生效」的问题；同时修正安装脚本吞掉 `bootstrap` / `kickstart` 失败却照样写入「已安装」版本标记、使坏状态无法自动重试的缺陷。Helper 版本号一并升到 2，老的坏安装会被强制重装恢复。",
+      "categories": {
+        "feature": [],
+        "improve": [
+          {
+            "text": "**安装失败不再写入成功标记**：安装脚本在 `set -e` 下把 `launchctl bootstrap`（失败时先 `bootout` 再重试一次）与 `kickstart` 改为硬失败，版本标记 `echo` 放在最后一步——任何一步加载失败都会以非零退出并把 `stderr` 原文透传回 App，不再写入版本文件，保证下次启动能重新触发安装恢复，而不是被永久锁死在「已安装但不生效」的状态。"
+          },
+          {
+            "text": "**安装现状检查纳入隔离属性**：`installedHelperIsCurrent()` 除比对版本、校验二进制可执行与 plist 存在外，新增对两个目标文件 `com.apple.quarantine` 属性的检查；只要任一文件仍带隔离属性即视为「未正确安装」，自动重新走授权安装流程。"
+          }
+        ],
+        "fix": [
+          {
+            "text": "**Helper 安装后仍带隔离属性导致系统代理不生效**：修复 v0.3.5 中经管理员授权装入 `/Library/PrivilegedHelperTools/com.clashbar.helper` 与 `/Library/LaunchDaemons/com.clashbar.helper.plist` 的文件仍残留 `com.apple.quarantine` 的问题。根因是由带隔离标记的 `.app`（下载安装场景）创建的文件会被内核重新盖上隔离属性，仅靠 `cp -X` 不拷贝源 xattr 并不足够；现在拷贝后显式 `xattr -c` + `xattr -d com.apple.quarantine` 清除隔离属性，并在 `bootstrap` 前校验，若仍残留则直接失败退出，不再让被系统拒绝加载的 Helper 静默留下「已安装」标记。"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v0.3.5",
+      "summary": "本次更新聚焦 **系统代理 Helper 安装方式重构与 TUN 协议栈记忆**：系统代理 Helper 从 `SMAppService` 登录项方式改为「管理员授权直装」——首次开启系统代理输入一次管理员密码，Helper 即被安装到系统目录 `/Library/PrivilegedHelperTools`，之后更新 App 不再失效、无需重新批准后台项目；同时 TUN 协议栈选择改为持久记忆，退出 / 重启 App、重启或启停内核后都会自动恢复到上次选择的栈，而不再回落 `mixed`。此外状态栏图标改为离屏合成单张模板图，渲染路径更简洁；资源包定位与图标加载逻辑进一步收敛。",
+      "categories": {
+        "feature": [
+          {
+            "text": "**系统代理 Helper 管理员授权安装**：系统代理 Helper 不再走 `SMAppService` 登录项注册与「后台项目批准」链路，改为通过 `osascript ... with administrator privileges` 一次性授权后，用 `cp -X` 将 Helper 二进制与 plist 安装到 `/Library/PrivilegedHelperTools` 及 `/Library/LaunchDaemons`，并写入版本文件、`launchctl bootstrap` + `kickstart` 拉起。首次开启系统代理时输入一次管理员密码即可，之后 **更新 App 不会导致 Helper 失效**，也不需要再去「系统设置 → 登录项」重复批准；仅当版本文件与当前 Helper 版本不一致时才会重新请求授权安装。"
+          },
+          {
+            "text": "**TUN 协议栈记忆持久化**：记住用户在 Proxy 快捷区选择的 TUN 协议栈；退出 / 重启 App、重启或启停内核后，开启 TUN 会自动恢复到上次选择的栈，而不再无条件回落 `mixed`。仅当配置文件本身未声明 stack 时才使用保存值，本地目标才写入记忆（远程目标不持久化），启动时若运行态栈与偏好一致则跳过多余 PATCH。"
+          }
+        ],
+        "improve": [
+          {
+            "text": "**状态栏图标离屏合成**：`StatusItemContentView` 不再继承 `NSView`，改为纯 `@MainActor` 类，把图标与速率文字离屏合成为单张模板图直接赋给 `statusItem.button.image`，移除子视图、AutoLayout 约束、透明占位图与 layout 逻辑，渲染路径更短、状态栏刷新更直接。"
+          },
+          {
+            "text": "**系统代理 Helper 状态精简**：围绕新的安装方式重整 Helper 健康检查与错误分支，移除「后台项目授权 / 签名不匹配 / 需批准」等旧登录项相关状态，统一为「已安装 / 授权取消 / 安装失败」等更贴合实际的诊断与提示；`TunPermissionService` 也复用同一套 `AdministratorShell` 授权封装。"
+          },
+          {
+            "text": "**资源包定位与图标加载简化**：收敛 `AppResourceBundleLocator` 与 `BrandIcon` 的资源查找逻辑，减少冗余分支，避免打包环境下的资源定位问题。"
+          },
+          {
+            "text": "**文档与打包脚本更新**：文档站同步系统代理排障步骤（首次授权、取消后需再开一次、更新 App 无需重复批准），并补充删除 App 前手动卸载 Helper 的命令；README 增补 Linux DO 社区致谢，图标预处理脚本一并优化。"
+          }
+        ],
+        "fix": [
+          {
+            "text": "**更新 App 后系统代理 Helper 失效**：修复此前经 `SMAppService` 注册的 Helper 在 App 更新后需要重新批准后台项目、否则系统代理开关「开了不生效」的问题；Helper 现直装到系统目录并带版本标记，App 更新不再影响已安装的 Helper。"
+          }
+        ]
+      }
+    },
+    {
+      "version": "v0.3.4",
+      "summary": "本次更新在 **架构瘦身与窗口行为收敛** 的基础上，补齐了一批日常可感知的体验改进：TUN 协议栈支持双击直接切换（含新的 `mips` 栈选项）、日志面板新增等级切换、状态栏流量曲线保留后台历史、远程订阅内容未变化时跳过重载。工程侧删除了 Repositories 与 UseCases 两层「单一实现」的间接抽象，把逻辑收敛回 Services 与 AppViewModel，减少约 500 行冗余胶水代码而不改变外部行为；同时新增窗口抑制逻辑，彻底禁用 macOS 的窗口状态恢复，避免这个纯菜单栏 App 在启动或系统恢复会话后弹出多余的空白窗口。",
+      "categories": {
+        "feature": [
+          {
+            "text": "**TUN 协议栈双击切换**：Proxy 快捷区的 TUN 协议栈 chip 新增双击入口，无论当前 TUN 是否已开，双击某个协议栈即以该栈开启 TUN（`enable`+`stack` 原子 PATCH，不再回落 `mixed`）；同栈且已开则跳过，关闭仍由行尾开关负责，切换成功后写入「TUN 协议栈已切换为 %@」日志并附悬停/无障碍提示。协议栈选项新增 `mips`（`system` / `gvisor` / `mixed` / `mips`）。"
+          },
+          {
+            "text": "**mips 协议栈内核版本守卫**：`mips` 协议栈需要 Mihomo v1.19.31 及以上内核；当前内核低于该版本（或版本无法解析）时，`mips` chip 自动置灰、悬停提示「需升级内核」，点击不会真正下发切换，运行中的 TUN 协议栈保持不变，仅弹出状态栏横幅并记录一条 warning 日志引导升级。"
+          },
+          {
+            "text": "**日志面板等级切换**：Logs 页新增日志等级切换——客户端侧提供按等级筛选的多选 chip（不选即显示全部），仅过滤面板展示内容；同时提供直接调整 Mihomo 内核 `log-level` 的菜单（`ConfigLogLevel` 全部取值，当前值打勾），从源头控制内核输出的日志详细程度。"
+          }
+        ],
+        "improve": [
+          {
+            "text": "**流量曲线保留后台历史**：状态栏流量 sparkline 改为后台持续采样、面板关闭时不再清空历史曲线（仅重置累计总量）；重新打开菜单时直接显示已有趋势曲线，不再每次从零开始爬升。"
+          },
+          {
+            "text": "**远程订阅内容未变时跳过重载**：远程配置下载后按内容比对，若与磁盘现有文件完全一致则不写盘、也不刷新状态或重载内核（`writeConfigData` 返回是否真正写入，仅在写入时触发 reload），避免相同订阅内容触发无意义的内核 reload。"
+          },
+          {
+            "text": "**移除 Repositories / UseCases 间接层**：删除全部只有单一实现的 Repository 与 UseCase 包装类型，把对应逻辑内联回 Config / Core / MihomoAPI / SystemProxy / Tun 等 Services 以及 AppViewModel 各扩展；净减约 500 行胶水代码，调用链更短，外部行为保持不变。"
+          },
+          {
+            "text": "**窗口状态恢复关闭**：注册 `NSQuitAlwaysKeepsWindows=false`、`applicationSupportsSecureRestorableState=false`，并对 `applicationShouldOpenUntitledFile` / `reopen` 做拦截，杜绝这个菜单栏 App 因系统会话恢复而残留的无用窗口。"
+          },
+          {
+            "text": "**日志来源筛选文案精简**：日志来源筛选项「全部来源」精简为「全部」（英文对应 `All`），与其它筛选 chip 的措辞长度对齐。"
+          },
+          {
+            "text": "**品牌图标资源更新**：重新导出运行 / 休眠 / TUN 状态品牌图标与文档站 Logo 资源。"
+          }
+        ],
+        "fix": [
+          {
+            "text": "**启动/恢复后弹出空白窗口**：新增窗口抑制逻辑，在启动、激活及窗口成为 key/main 时排除非面板窗口（跳过 `NSPanel`、StatusBar / MenuBar / Popover / Alert / 全屏过渡窗口与 sheet），把系统会话恢复或 SwiftUI `Settings` 场景产生的空白窗口即时 `orderOut` + `close`，不再有多余窗口一闪而过或停留。"
+          },
+          {
+            "text": "**打包脚本 `format_bytes` 静默失效**：修复打包脚本中 awk 字节格式化误用保留字 `index` 作为循环变量、在部分 awk 实现下不报错也不换算单位的问题，改用 `idx` 变量。"
+          }
+        ]
+      }
+    },
+    {
       "version": "v0.3.3",
       "summary": "本次更新集中在 **内核日志洪泛治理与菜单栏快捷键可用性**：修复 mihomo TUN 句柄失效后日志刷屏导致 ClashBar 内存涨到 3.2 GB、CPU 占用 230% 的问题，在日志管道源头加入限流与重复折叠；同时修复菜单命令状态冻结（`⌘E` 永久灰掉）和大写快捷键被隐式附加 `⇧` 的问题，补齐 `⌃⌘1/2/3` 模式切换，并为所有快捷键操作补上状态栏横幅反馈。此外菜单栏图标在 TUN 模式下有了独立形态，代理页新增延迟历史显示开关，文档站也上线了自动生成的更新日志页面。",
       "categories": {
@@ -606,6 +704,6 @@
       }
     }
   ],
-  "generatedAt": "2026-09-02T01:22:54.473Z",
+  "generatedAt": "2026-09-30T06:26:06.930Z",
   "source": "CHANGELOG.md"
 }

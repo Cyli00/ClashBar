@@ -1,3 +1,22 @@
+## v0.3.6
+
+![macOS](https://img.shields.io/badge/macOS-Supported-000000?style=flat-square&logo=apple) ![Version](https://img.shields.io/badge/Release-v0.3.6-10B981?style=flat-square) ![Core](https://img.shields.io/badge/Core-Mihomo-6366f1?style=flat-square)
+
+> 本次更新是针对 v0.3.5 的 **系统代理 Helper 安装修复**：修复从 `.dmg` 下载安装的场景下，管理员授权装入的 Helper 二进制与 LaunchDaemon plist 仍带 `com.apple.quarantine` 隔离属性、被系统以「Launch Constraint Violation / Refusing to execute quarantined file」拒绝加载，导致「Helper 已授权但系统代理开关开了不生效」的问题；同时修正安装脚本吞掉 `bootstrap` / `kickstart` 失败却照样写入「已安装」版本标记、使坏状态无法自动重试的缺陷。Helper 版本号一并升到 2，老的坏安装会被强制重装恢复。
+
+### 📝 更新日志 (Changelog)
+
+**🚀 优化改进 (Improvements)**
+
+- ![Optimize](https://img.shields.io/badge/Optimize-3B82F6?style=flat-square) **安装失败不再写入成功标记**：安装脚本在 `set -e` 下把 `launchctl bootstrap`（失败时先 `bootout` 再重试一次）与 `kickstart` 改为硬失败，版本标记 `echo` 放在最后一步——任何一步加载失败都会以非零退出并把 `stderr` 原文透传回 App，不再写入版本文件，保证下次启动能重新触发安装恢复，而不是被永久锁死在「已安装但不生效」的状态。
+- ![Optimize](https://img.shields.io/badge/Optimize-3B82F6?style=flat-square) **安装现状检查纳入隔离属性**：`installedHelperIsCurrent()` 除比对版本、校验二进制可执行与 plist 存在外，新增对两个目标文件 `com.apple.quarantine` 属性的检查；只要任一文件仍带隔离属性即视为「未正确安装」，自动重新走授权安装流程。
+
+**🐞 修复问题 (Bug Fixes)**
+
+- ![Fix](https://img.shields.io/badge/Fix-EF4444?style=flat-square) **Helper 安装后仍带隔离属性导致系统代理不生效**：修复 v0.3.5 中经管理员授权装入 `/Library/PrivilegedHelperTools/com.clashbar.helper` 与 `/Library/LaunchDaemons/com.clashbar.helper.plist` 的文件仍残留 `com.apple.quarantine` 的问题。根因是由带隔离标记的 `.app`（下载安装场景）创建的文件会被内核重新盖上隔离属性，仅靠 `cp -X` 不拷贝源 xattr 并不足够；现在拷贝后显式 `xattr -c` + `xattr -d com.apple.quarantine` 清除隔离属性，并在 `bootstrap` 前校验，若仍残留则直接失败退出，不再让被系统拒绝加载的 Helper 静默留下「已安装」标记。
+
+---
+
 ## v0.3.5
 
 ![macOS](https://img.shields.io/badge/macOS-Supported-000000?style=flat-square&logo=apple) ![Version](https://img.shields.io/badge/Release-v0.3.5-10B981?style=flat-square) ![Core](https://img.shields.io/badge/Core-Mihomo-6366f1?style=flat-square)
