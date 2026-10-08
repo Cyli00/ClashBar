@@ -1,5 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 
+test.afterEach(async ({ page }, testInfo) => {
+  await page.screenshot({ path: testInfo.outputPath('screen.png'), fullPage: true });
+});
+
 async function installBridge(page: Page, running = true) {
   await page.addInitScript(({ running }) => {
     const state = {
@@ -81,13 +85,14 @@ test('settings validate, preserve drafts across tabs, import, save and launch', 
   await expect(page.getByRole('button', { name: '保存端口' })).toBeDisabled();
 });
 
-test('proxy selection, mode, delay, providers and keyboard tabs use the IPC contract', async ({ page }) => {
+test('proxy selection, mode, delay, providers and keyboard tabs use the IPC contract', async ({ page }, testInfo) => {
   await installBridge(page); await page.goto('/');
-  await page.getByLabel('香港分组').selectOption('东京 02');
+  await page.getByLabel('香港分组', { exact: true }).selectOption('东京 02');
   await expect.poll(() => page.evaluate(() => (window as any).testState.snapshot.proxies.proxies['香港分组'].now)).toBe('东京 02');
   await page.getByLabel('代理模式', { exact: true }).selectOption('global');
   await page.getByRole('button', { name: '测试 香港分组 的当前节点延迟' }).click();
   await expect(page.getByText('42 ms')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('proxies.png'), fullPage: true });
   await page.getByRole('button', { name: '更新代理提供者 本地提供者' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).testState.commands.some((c: any) => c.command === 'update_provider'))).toBeTruthy();
   await page.getByRole('tab', { name: '代理', exact: true }).focus();
@@ -135,7 +140,7 @@ test('connection dialog traps focus, preserves failure, prevents duplicate close
 
 test('a stale snapshot cannot replace state after stopping the core', async ({ page }) => {
   await installBridge(page); await page.goto('/');
-  await expect(page.getByLabel('香港分组')).toBeVisible();
+  await expect(page.getByLabel('香港分组', { exact: true })).toBeVisible();
   await page.evaluate(() => { (window as any).testState.deferSnapshot = true; });
   await page.getByRole('button', { name: '刷新', exact: true }).click();
   await expect.poll(() => page.evaluate(() => Boolean((window as any).testState.resolveSnapshot))).toBe(true);
@@ -143,16 +148,16 @@ test('a stale snapshot cannot replace state after stopping the core', async ({ p
   await expect(page.getByText('已停止', { exact: true })).toBeVisible();
   await page.evaluate(() => { (window as any).testState.resolveSnapshot(); });
   await expect(page.getByText('内核未启动', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('香港分组')).toHaveCount(0);
+  await expect(page.getByLabel('香港分组', { exact: true })).toHaveCount(0);
 });
 
 test('system proxy is confirmed, logs are bounded, narrow layout keeps settings reachable', async ({ page }) => {
   await installBridge(page); await page.goto('/');
-  await page.getByLabel('系统代理', { exact: true }).check();
+  await page.getByLabel('系统代理', { exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByLabel('系统代理', { exact: true })).not.toBeChecked();
-  await page.getByLabel('系统代理', { exact: true }).check();
+  await page.getByLabel('系统代理', { exact: true }).click();
   await page.getByRole('button', { name: '开启系统代理', exact: true }).click();
   await expect(page.getByLabel('系统代理', { exact: true })).toBeChecked();
   await page.getByRole('tab', { name: '日志' }).click();

@@ -6,7 +6,7 @@ on:
       - 'desktop/**'
       - '.github/workflows/windows-desktop.yml'
   push:
-    branches: [main, 'feat/windows-tauri']
+    branches: [main]
     paths:
       - 'desktop/**'
       - '.github/workflows/windows-desktop.yml'
@@ -39,6 +39,14 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Browser screenshots and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-evidence
+          path: desktop/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
   windows:
     name: Windows x64 checks and installer
     runs-on: windows-latest

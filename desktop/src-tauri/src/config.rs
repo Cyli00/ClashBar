@@ -142,6 +142,7 @@ pub fn runtime(bytes: &[u8], settings: &Settings, token: &str) -> Result<Vec<u8>
     put(&mut cors, "allow-private-network", false);
     map.insert(key("external-controller-cors"), Value::Mapping(cors));
     // Provider caches must not write to paths supplied by an untrusted subscription.
+    let cache_id = profile_id(bytes);
     for kind in ["proxy-providers", "rule-providers"] {
         if let Some(Value::Mapping(providers)) = map.get_mut(key(kind)) {
             for (index, (_, provider)) in providers.iter_mut().enumerate() {
@@ -152,7 +153,7 @@ pub fn runtime(bytes: &[u8], settings: &Settings, token: &str) -> Result<Vec<u8>
                     put(
                         provider,
                         "path",
-                        format!("./providers/{}/{kind}/{index}.yaml", profile_id(bytes)),
+                        format!("./providers/{cache_id}/{kind}/{index}.yaml"),
                     );
                 }
             }

@@ -46,7 +46,7 @@ Tabs use roving focus, Arrow Left/Right, Home/End, selected state and associated
 
 ## Overlays and feedback
 
-`confirmAction` is the sole confirmation owner: native HTML `dialog.showModal()` with app-authored content, accessible title/description, inert background, focus containment, Escape when idle, cancel-first focus and restoration. Connection interruption and enabling system proxy require explicit confirmation. The dialog stays open during a mutation and on failure. No `window.alert`, `window.confirm` or `window.prompt` is used. Critical errors persist in one alert banner; successful actions use one polite status region. No fake Undo is offered for closed connections.
+`confirmAction` is the sole confirmation owner: native HTML `dialog.showModal()` with app-authored content, accessible title/description, inert background, focus containment, Escape when idle, cancel-first focus and restoration. Connection interruption, replacing an existing configuration and enabling system proxy require explicit confirmation. The dialog stays open during a mutation and on failure. No `window.alert`, `window.confirm` or `window.prompt` is used. Critical errors persist in one alert banner; successful actions use one polite status region. No fake Undo is offered for closed connections.
 
 ## Async and resilience
 
@@ -54,7 +54,7 @@ Mutations are pessimistic and serial. Starting a mutation invalidates every olde
 
 ## Validation and sensitive values
 
-All forms use `noValidate`. Inline errors have `aria-invalid`, existing descriptions and first-invalid focus. Ports are distinct integers 1024–65535. Subscription URLs must use HTTPS and cannot embed userinfo or fragments. Subscription input is masked by default, with an accessible reveal control; it is cleared after import, remasked on tab navigation and never copied into frontend storage. URLs in backend error text are redacted. No untrusted strings enter HTML parsing sinks; all data uses text nodes.
+All forms use `noValidate`. Inline errors have `aria-invalid`, existing descriptions and first-invalid focus. Ports are distinct integers 1024–65535. Subscription URLs must use HTTPS on default port 443 and cannot embed userinfo or fragments. Subscription input is masked by default, with an accessible reveal control; it is cleared after import, remasked on tab navigation and never copied into frontend storage. URLs in backend error text are redacted. No untrusted strings enter HTML parsing sinks; all data uses text nodes.
 
 ## Verification
 

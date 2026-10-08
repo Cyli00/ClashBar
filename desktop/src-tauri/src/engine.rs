@@ -38,16 +38,17 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(directory: PathBuf) -> Result<Self, String> {
+        let system_proxy = SystemProxy::new(directory.clone());
+        // Recover connectivity even when settings or runtime storage are damaged.
+        #[cfg(windows)]
+        let last_error = system_proxy.recover().err();
+        #[cfg(not(windows))]
+        let last_error = None;
         fs::create_dir_all(directory.join("runtime/providers/proxy-providers"))
             .map_err(|e| e.to_string())?;
         fs::create_dir_all(directory.join("runtime/providers/rule-providers"))
             .map_err(|e| e.to_string())?;
         let settings = Settings::load(&directory)?;
-        let system_proxy = SystemProxy::new(directory.clone());
-        #[cfg(windows)]
-        let last_error = system_proxy.recover().err();
-        #[cfg(not(windows))]
-        let last_error = None;
         Ok(Self {
             directory,
             settings,

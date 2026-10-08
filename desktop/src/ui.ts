@@ -109,13 +109,23 @@ export function confirmAction(title: string, description: string, actionLabel: s
     cancel.disabled = submit.disabled = true;
     submit.setAttribute('aria-busy', 'true');
     message.textContent = '';
-    if (await action()) dialog.close();
+    const succeeded = await action();
+    if (succeeded) dialog.close();
     else message.textContent = '操作未完成，请检查窗口内的错误提示后重试。';
     cancel.disabled = submit.disabled = false;
     submit.setAttribute('aria-busy', 'false');
+    if (!succeeded) submit.focus();
   }, 'danger');
   actions.append(cancel, submit);
   dialog.append(heading, copy, message, actions);
+  dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Tab' || event.isComposing) return;
+    const controls = [...dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+    const first = controls[0], last = controls.at(-1);
+    if (!first || !last) { event.preventDefault(); return; }
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
   dialog.addEventListener('cancel', event => { if (submit.disabled) event.preventDefault(); });
   dialog.addEventListener('close', () => {
     dialog.remove();
