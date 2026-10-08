@@ -32,7 +32,7 @@ impl TrayIcons {
 
 fn tint(source: &Image<'_>, ink: u8) -> Image<'static> {
     let mut rgba = source.rgba().to_vec();
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel[..3].fill(ink);
     }
     Image::new_owned(rgba, source.width(), source.height())
