@@ -5,6 +5,11 @@ use std::time::Duration;
 use url::Url;
 
 const MAX_RESPONSE: usize = 16 * 1024 * 1024;
+const MAX_MEMORY_SAMPLE: usize = 4096;
+const DELAY_QUERY: &[(&str, &str)] = &[
+    ("timeout", "5000"),
+    ("url", "https://www.gstatic.com/generate_204"),
+];
 
 #[derive(Clone)]
 pub struct Controller {
@@ -20,6 +25,8 @@ pub struct Snapshot {
     pub rules: Value,
     pub connections: Value,
     pub providers: Value,
+    /// Bytes used by the core. Older cores may not expose this metric.
+    pub memory: Option<u64>,
 }
 
 impl Controller {
@@ -123,14 +130,58 @@ impl Controller {
             .get("mode")
             .and_then(Value::as_str)
             .ok_or("The core response has no mode.")?;
-        // /configs may contain the API secret. Return only the field used by the UI.
+        let log_level = configs
+            .get("log-level")
+            .and_then(Value::as_str)
+            .filter(|level| valid_log_level(level));
+        // Modern mihomo includes memory in /connections. Avoid opening a stream
+        // on each poll when the same response already contains the metric.
+        let memory = match connections.get("memory").and_then(Value::as_u64) {
+            Some(memory) => Some(memory),
+            None => self.memory_usage().await,
+        };
+        // /configs may contain the API secret. Only allow UI configuration fields.
         Ok(Snapshot {
             proxies,
-            configs: json!({"mode": mode}),
+            configs: json!({"mode": mode, "log-level": log_level}),
             rules,
             connections,
             providers,
+            memory,
         })
+    }
+
+    async fn memory_usage(&self) -> Option<u64> {
+        // /memory is newline-delimited JSON that normally never reaches EOF.
+        // Read one bounded sample and drop the stream; unsupported/slow/malformed
+        // telemetry must not break the otherwise usable dashboard snapshot.
+        let mut response = self
+            .client
+            .get(self.url(&["memory"]))
+            .bearer_auth(&self.secret)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.ok()? {
+            let newline = chunk.iter().position(|byte| *byte == b'\n');
+            let sample = &chunk[..newline.unwrap_or(chunk.len())];
+            if bytes.len() + sample.len() > MAX_MEMORY_SAMPLE {
+                return None;
+            }
+            bytes.extend_from_slice(sample);
+            if newline.is_some() {
+                break;
+            }
+        }
+        serde_json::from_slice::<Value>(&bytes)
+            .ok()?
+            .get("inuse")
+            .and_then(Value::as_u64)
     }
 
     pub async fn set_mode(&self, mode: &str) -> Result<(), String> {
@@ -141,6 +192,19 @@ impl Controller {
             Method::PATCH,
             &["configs"],
             Some(json!({"mode": mode})),
+            &[],
+        )
+        .await
+        .map(|_| ())
+    }
+    pub async fn set_log_level(&self, level: &str) -> Result<(), String> {
+        if !valid_log_level(level) {
+            return Err("Unknown log level.".into());
+        }
+        self.request(
+            Method::PATCH,
+            &["configs"],
+            Some(json!({"log-level": level})),
             &[],
         )
         .await
@@ -161,15 +225,7 @@ impl Controller {
     pub async fn test_delay(&self, name: &str) -> Result<Value, String> {
         check_name(name)?;
         let result = self
-            .request(
-                Method::GET,
-                &["proxies", name, "delay"],
-                None,
-                &[
-                    ("timeout", "5000"),
-                    ("url", "https://www.gstatic.com/generate_204"),
-                ],
-            )
+            .request(Method::GET, &["proxies", name, "delay"], None, DELAY_QUERY)
             .await?;
         let delay = result
             .get("delay")
@@ -177,9 +233,29 @@ impl Controller {
             .ok_or("The proxy latency test did not return a delay.")?;
         Ok(json!({"delay": delay}))
     }
+    /// Test all members; mihomo also clears fixed automatic-group selections.
+    pub async fn test_group_delay(&self, name: &str) -> Result<Value, String> {
+        check_name(name)?;
+        let result = self
+            .request(Method::GET, &["group", name, "delay"], None, DELAY_QUERY)
+            .await?;
+        if !result.as_object().is_some_and(|delays| {
+            delays
+                .values()
+                .all(|delay| delay.as_u64().is_some_and(|delay| delay <= u16::MAX as u64))
+        }) {
+            return Err("The group latency test returned invalid delays.".into());
+        }
+        Ok(result)
+    }
     pub async fn close_connection(&self, id: &str) -> Result<(), String> {
         check_name(id)?;
         self.request(Method::DELETE, &["connections", id], None, &[])
+            .await
+            .map(|_| ())
+    }
+    pub async fn close_all_connections(&self) -> Result<(), String> {
+        self.request(Method::DELETE, &["connections"], None, &[])
             .await
             .map(|_| ())
     }
@@ -189,6 +265,21 @@ impl Controller {
             .await
             .map(|_| ())
     }
+    pub async fn provider_healthcheck(&self, name: &str) -> Result<(), String> {
+        check_name(name)?;
+        self.request(
+            Method::GET,
+            &["providers", "proxies", name, "healthcheck"],
+            None,
+            &[],
+        )
+        .await
+        .map(|_| ())
+    }
+}
+
+fn valid_log_level(level: &str) -> bool {
+    ["debug", "info", "warning", "error", "silent"].contains(&level)
 }
 
 fn check_name(name: &str) -> Result<(), String> {
@@ -205,6 +296,156 @@ fn check_name(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        thread::{self, JoinHandle},
+        time::Instant,
+    };
+
+    struct Response {
+        method: &'static str,
+        path: &'static str,
+        status: u16,
+        body: String,
+    }
+
+    impl Response {
+        fn new(method: &'static str, path: &'static str, status: u16, body: Value) -> Self {
+            Self {
+                method,
+                path,
+                status,
+                body: if status == 204 {
+                    String::new()
+                } else {
+                    body.to_string()
+                },
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct Request {
+        method: String,
+        target: String,
+        authorization: String,
+        body: Vec<u8>,
+    }
+
+    fn read_request(stream: &mut TcpStream) -> Request {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0; 1024];
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0, "fixture received an incomplete request");
+            bytes.extend_from_slice(&chunk[..count]);
+            assert!(bytes.len() < 16 * 1024);
+            if let Some(index) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
+                break index + 4;
+            }
+        };
+        let header = String::from_utf8(bytes[..header_end].to_vec()).unwrap();
+        let mut lines = header.lines();
+        let mut first = lines.next().unwrap().split_whitespace();
+        let method = first.next().unwrap().to_owned();
+        let target = first.next().unwrap().to_owned();
+        let mut authorization = String::new();
+        let mut length = 0;
+        for line in lines {
+            if let Some((name, value)) = line.split_once(':') {
+                match name.to_ascii_lowercase().as_str() {
+                    "authorization" => authorization = value.trim().to_owned(),
+                    "content-length" => length = value.trim().parse::<usize>().unwrap(),
+                    _ => {}
+                }
+            }
+        }
+        while bytes.len() < header_end + length {
+            let mut chunk = [0; 1024];
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0);
+            bytes.extend_from_slice(&chunk[..count]);
+        }
+        Request {
+            method,
+            target,
+            authorization,
+            body: bytes[header_end..header_end + length].to_vec(),
+        }
+    }
+
+    /// An actual loopback HTTP fixture verifies reqwest serialization and headers,
+    /// without shelling out or reaching a public network/service.
+    fn fixture(mut responses: Vec<Response>) -> (Controller, JoinHandle<Vec<Request>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut requests = Vec::new();
+            while !responses.is_empty() {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "fixture expected another request"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("fixture accept failed: {error}"),
+                };
+                let request = read_request(&mut stream);
+                let path = request.target.split('?').next().unwrap();
+                let index = responses
+                    .iter()
+                    .position(|response| response.method == request.method && response.path == path)
+                    .unwrap_or_else(|| panic!("unexpected fixture request: {request:?}"));
+                let response = responses.remove(index);
+                let header = format!(
+                    "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response.status,
+                    response.body.len()
+                );
+                stream.write_all(header.as_bytes()).unwrap();
+                stream.write_all(response.body.as_bytes()).unwrap();
+                requests.push(request);
+            }
+            requests
+        });
+        (
+            Controller::new(port, "fixture-secret".into()).unwrap(),
+            server,
+        )
+    }
+
+    fn snapshot_responses(memory: Option<u64>) -> Vec<Response> {
+        let mut connections = json!({"connections": [], "uploadTotal": 7, "downloadTotal": 11});
+        if let Some(memory) = memory {
+            connections["memory"] = json!(memory);
+        }
+        vec![
+            Response::new("GET", "/proxies", 200, json!({"proxies": {}})),
+            Response::new(
+                "GET",
+                "/configs",
+                200,
+                json!({
+                    "mode": "rule", "log-level": "info", "secret": "must-not-cross-ipc",
+                    "external-controller": "127.0.0.1:9090"
+                }),
+            ),
+            Response::new("GET", "/rules", 200, json!({"rules": []})),
+            Response::new("GET", "/connections", 200, connections),
+            Response::new("GET", "/providers/proxies", 200, json!({"providers": {}})),
+        ]
+    }
+
     #[test]
     fn proxy_names_are_one_encoded_path_segment() {
         let controller = Controller::new(19090, "hidden".into()).unwrap();
@@ -213,5 +454,122 @@ mod tests {
         assert!(url.query().is_none());
         assert!(check_name(".").is_err());
         assert!(check_name("..").is_err());
+    }
+
+    #[tokio::test]
+    async fn compact_controls_use_authenticated_encoded_endpoints() {
+        let (controller, server) = fixture(vec![
+            Response::new("DELETE", "/connections", 204, Value::Null),
+            Response::new(
+                "GET",
+                "/providers/proxies/HK%20%2F%20fast%3F%23/healthcheck",
+                204,
+                Value::Null,
+            ),
+            Response::new(
+                "GET",
+                "/group/HK%20%2F%20fast%3F%23/delay",
+                200,
+                json!({"Node A": 42, "Node B": 0}),
+            ),
+            Response::new("PATCH", "/configs", 204, Value::Null),
+        ]);
+        controller.close_all_connections().await.unwrap();
+        controller
+            .provider_healthcheck("HK / fast?#")
+            .await
+            .unwrap();
+        assert_eq!(
+            controller.test_group_delay("HK / fast?#").await.unwrap(),
+            json!({"Node A": 42, "Node B": 0})
+        );
+        controller.set_log_level("debug").await.unwrap();
+        assert_eq!(
+            controller.set_log_level("trace").await.unwrap_err(),
+            "Unknown log level."
+        );
+        let requests = server.join().unwrap();
+        assert!(requests
+            .iter()
+            .all(|request| request.authorization == "Bearer fixture-secret"));
+        let group = requests
+            .iter()
+            .find(|request| request.target.starts_with("/group/"))
+            .unwrap();
+        let group_url = Url::parse(&format!("http://127.0.0.1{}", group.target)).unwrap();
+        let query: std::collections::BTreeMap<_, _> = group_url.query_pairs().collect();
+        assert_eq!(
+            query.get("timeout").map(|value| value.as_ref()),
+            Some("5000")
+        );
+        assert_eq!(
+            query.get("url").map(|value| value.as_ref()),
+            Some("https://www.gstatic.com/generate_204")
+        );
+        let patch = requests
+            .iter()
+            .find(|request| request.method == "PATCH")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&patch.body).unwrap(),
+            json!({"log-level": "debug"})
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_uses_connection_memory_and_only_exposes_allowed_configs() {
+        let (controller, server) = fixture(snapshot_responses(Some(123456)));
+        let snapshot = controller.snapshot().await.unwrap();
+        assert_eq!(snapshot.memory, Some(123456));
+        assert_eq!(
+            snapshot.configs,
+            json!({"mode": "rule", "log-level": "info"})
+        );
+        assert!(!serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("must-not-cross-ipc"));
+        assert_eq!(server.join().unwrap().len(), 5); // No /memory stream request.
+    }
+
+    #[tokio::test]
+    async fn unavailable_memory_does_not_fail_snapshot() {
+        let mut responses = snapshot_responses(None);
+        responses.push(Response::new(
+            "GET",
+            "/memory",
+            404,
+            json!({"message": "unsupported"}),
+        ));
+        let (controller, server) = fixture(responses);
+        let snapshot = controller.snapshot().await.unwrap();
+        assert_eq!(snapshot.memory, None);
+        assert_eq!(snapshot.configs["mode"], "rule");
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_reads_only_first_stream_sample() {
+        let response = Response {
+            method: "GET",
+            path: "/memory",
+            status: 200,
+            body: "{\"inuse\": 123, \"oslimit\": 0}\n{\"inuse\": 456}\n".into(),
+        };
+        let (controller, server) = fixture(vec![response]);
+        assert_eq!(controller.memory_usage().await, Some(123));
+        let requests = server.join().unwrap();
+        assert_eq!(requests[0].authorization, "Bearer fixture-secret");
+    }
+
+    #[tokio::test]
+    async fn invalid_group_latency_payload_is_rejected() {
+        let (controller, server) = fixture(vec![Response::new(
+            "GET",
+            "/group/Auto/delay",
+            200,
+            json!({"Node A": "not-a-delay"}),
+        )]);
+        assert!(controller.test_group_delay("Auto").await.is_err());
+        server.join().unwrap();
     }
 }

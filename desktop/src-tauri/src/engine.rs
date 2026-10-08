@@ -1,5 +1,5 @@
 use crate::{
-    config::{self, Settings},
+    config::{self, Profile, Settings},
     controller::Controller,
     process::{self, Logs, ManagedChild},
     system_proxy::SystemProxy,
@@ -23,6 +23,8 @@ pub struct Status {
     pub system_proxy: bool,
     pub version: Option<String>,
     pub last_error: Option<String>,
+    pub profiles: Vec<Profile>,
+    pub active_profile_id: Option<String>,
 }
 
 pub struct Engine {
@@ -41,14 +43,51 @@ impl Engine {
         let system_proxy = SystemProxy::new(directory.clone());
         // Recover connectivity even when settings or runtime storage are damaged.
         #[cfg(windows)]
-        let last_error = system_proxy.recover().err();
+        let mut last_error = system_proxy.recover().err();
         #[cfg(not(windows))]
-        let last_error = None;
+        let mut last_error = None;
         fs::create_dir_all(directory.join("runtime/providers/proxy-providers"))
             .map_err(|e| e.to_string())?;
         fs::create_dir_all(directory.join("runtime/providers/rule-providers"))
             .map_err(|e| e.to_string())?;
-        let settings = Settings::load(&directory)?;
+        let mut settings = Settings::load(&directory)?;
+        fs::create_dir_all(directory.join("profiles")).map_err(|e| e.to_string())?;
+        // Upgrade the first preview's single slot without losing its source YAML.
+        if settings.active_profile_id.is_none() && settings.profiles.is_empty() {
+            if let Some(name) = settings.config_name.clone() {
+                let migrated = (|| -> Result<Settings, String> {
+                    let bytes = read_profile(&directory.join("profile.yaml"))?;
+                    config::runtime(&bytes, &settings, "migration-validation")?;
+                    let id = config::profile_id(&bytes);
+                    config::atomic_write(
+                        &directory.join("profiles").join(format!("{id}.yaml")),
+                        &bytes,
+                    )?;
+                    let mut upgraded = settings.clone();
+                    upgraded.profiles.push(Profile {
+                        id: id.clone(),
+                        name,
+                    });
+                    upgraded.active_profile_id = Some(id);
+                    upgraded.save(&directory)?;
+                    Ok(upgraded)
+                })();
+                match migrated {
+                    Ok(upgraded) => settings = upgraded,
+                    Err(error) => {
+                        // Keep the UI available so the user can re-import a missing/damaged slot.
+                        settings.config_name = None;
+                        let message = format!(
+                            "Could not recover the previous profile: {error} Import it again."
+                        );
+                        last_error = Some(match last_error {
+                            Some(previous) => format!("{previous} {message}"),
+                            None => message,
+                        });
+                    }
+                }
+            }
+        }
         Ok(Self {
             directory,
             settings,
@@ -86,6 +125,8 @@ impl Engine {
             system_proxy,
             version: self.version.clone(),
             last_error: self.last_error.clone(),
+            profiles: self.settings.profiles.clone(),
+            active_profile_id: self.settings.active_profile_id.clone(),
         }
     }
 
@@ -141,25 +182,189 @@ impl Engine {
         Ok(self.status())
     }
 
+    fn register_profile(&mut self, bytes: &[u8], name: &str) -> Result<String, String> {
+        config::runtime(bytes, &self.settings, "validation-placeholder")?;
+        let id = config::profile_id(bytes);
+        let mut settings = self.settings.clone();
+        let name: String = name.chars().filter(|c| !c.is_control()).take(180).collect();
+        let name = if name.trim().is_empty() {
+            "Imported profile".to_owned()
+        } else {
+            name
+        };
+        if settings.active_profile_id.as_deref() == Some(id.as_str()) {
+            settings.config_name = Some(name.clone());
+        }
+        if let Some(profile) = settings
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == id)
+        {
+            profile.name = name;
+        } else {
+            if settings.profiles.len() >= 128 {
+                return Err("The profile library is limited to 128 profiles.".into());
+            }
+            settings.profiles.push(Profile {
+                id: id.clone(),
+                name,
+            });
+        }
+        config::atomic_write(
+            &self.directory.join("profiles").join(format!("{id}.yaml")),
+            bytes,
+        )?;
+        settings.save(&self.directory)?;
+        self.settings = settings;
+        Ok(id)
+    }
+
+    fn profile_settings(&self, id: &str) -> Result<Settings, String> {
+        let profile = self
+            .settings
+            .profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .ok_or("The selected profile no longer exists.")?;
+        let mut settings = self.settings.clone();
+        settings.active_profile_id = Some(profile.id.clone());
+        settings.config_name = Some(profile.name.clone());
+        Ok(settings)
+    }
+
+    fn active_profile_path(&self) -> Result<PathBuf, String> {
+        let id = self
+            .settings
+            .active_profile_id
+            .as_deref()
+            .ok_or("Import a mihomo YAML profile first.")?;
+        Ok(self.directory.join("profiles").join(format!("{id}.yaml")))
+    }
+
     pub fn import_profile(&mut self, bytes: &[u8], name: &str) -> Result<Status, String> {
         self.require_stopped()?;
-        config::runtime(bytes, &self.settings, "validation-placeholder")?;
-        let path = self.directory.join("profile.yaml");
-        let previous = fs::read(&path).ok();
-        let mut settings = self.settings.clone();
-        settings.config_name = Some(name.chars().filter(|c| !c.is_control()).take(180).collect());
-        config::atomic_write(&path, bytes)?;
-        if let Err(error) = settings.save(&self.directory) {
-            if let Some(previous) = previous {
-                let _ = config::atomic_write(&path, &previous);
-            } else {
-                let _ = fs::remove_file(path);
-            }
-            return Err(error);
-        }
+        let id = self.register_profile(bytes, name)?;
+        let settings = self.profile_settings(&id)?;
+        settings.save(&self.directory)?;
         self.settings = settings;
         self.last_error = None;
         Ok(self.status())
+    }
+
+    pub async fn import_and_activate(
+        &mut self,
+        bytes: &[u8],
+        name: &str,
+    ) -> Result<Status, String> {
+        let id = self.register_profile(bytes, name)?;
+        self.select_profile(&id).await
+    }
+
+    pub async fn select_profile(&mut self, id: &str) -> Result<Status, String> {
+        self.refresh();
+        let settings = self.profile_settings(id)?;
+        let raw = read_profile(&self.directory.join("profiles").join(format!("{id}.yaml")))?;
+        config::runtime(&raw, &settings, "validation-placeholder")?;
+        if self.settings.active_profile_id.as_deref() == Some(id) {
+            return Ok(self.status());
+        }
+        let previous = self.settings.clone();
+        let was_running = self.child.is_some();
+        if !was_running {
+            settings.save(&self.directory)?;
+            self.settings = settings;
+            self.last_error = None;
+            return Ok(self.status());
+        }
+        // Run the candidate's real mihomo -t before disturbing a working connection.
+        self.validate_candidate(&raw, &settings).await?;
+        let proxy_enabled = self.owned_proxy_enabled()?;
+        self.stop()?;
+        self.settings = settings;
+        let activation = match self.resume(proxy_enabled).await {
+            Ok(_) => self.settings.save(&self.directory),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = activation {
+            // The persisted pointer still names the old profile until activation succeeds.
+            // If safe shutdown fails, keep the new working core alive for proxy recovery.
+            if let Err(cleanup) = self.stop() {
+                let message = format!("Could not activate the profile: {error} Could not safely stop the candidate: {cleanup}");
+                self.last_error = Some(message.clone());
+                return Err(message);
+            }
+            self.settings = previous;
+            let error = match self.resume(proxy_enabled).await {
+                Ok(_) => format!("Could not activate the profile: {error} The previous profile was restored."),
+                Err(recovery) => format!("Could not activate the profile: {error} Previous profile recovery failed: {recovery}"),
+            };
+            self.last_error = Some(error.clone());
+            return Err(error);
+        }
+        self.last_error = None;
+        Ok(self.status())
+    }
+
+    async fn validate_candidate(&self, raw: &[u8], settings: &Settings) -> Result<(), String> {
+        let executable = settings
+            .core_path
+            .as_ref()
+            .ok_or("Choose a trusted mihomo executable first.")?;
+        let secret = config::secret();
+        let derived = config::runtime(raw, settings, &secret)?;
+        let directory = self.directory.join("runtime");
+        for kind in ["proxy-providers", "rule-providers"] {
+            fs::create_dir_all(
+                directory
+                    .join("providers")
+                    .join(config::profile_id(raw))
+                    .join(kind),
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        let path = directory.join("validate-profile.yaml");
+        config::atomic_write(&path, &derived)?;
+        let result = async {
+            ManagedChild::spawn(executable, &directory, &path, true, &self.logs, &secret)?
+                .validate()
+                .await
+        }
+        .await;
+        let _ = fs::remove_file(path);
+        result
+    }
+
+    fn owned_proxy_enabled(&self) -> Result<bool, String> {
+        #[cfg(windows)]
+        {
+            self.system_proxy.is_enabled()
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(false)
+        }
+    }
+
+    async fn resume(&mut self, proxy_enabled: bool) -> Result<Status, String> {
+        self.start().await?;
+        if proxy_enabled {
+            self.set_system_proxy(true)?;
+        }
+        Ok(self.status())
+    }
+
+    pub async fn restart(&mut self) -> Result<Status, String> {
+        let proxy_enabled = self.owned_proxy_enabled()?;
+        self.stop()?;
+        self.resume(proxy_enabled).await
+    }
+
+    pub fn clear_logs(&mut self) -> Result<(), String> {
+        self.logs
+            .lock()
+            .map_err(|_| "Cannot clear core logs.")?
+            .clear();
+        Ok(())
     }
 
     pub fn save_settings(
@@ -203,7 +408,7 @@ impl Engine {
         if self.settings.config_name.is_none() {
             return Err("Import a mihomo YAML profile first.".into());
         }
-        let raw = read_profile(&self.directory.join("profile.yaml"))?;
+        let raw = read_profile(&self.active_profile_path()?)?;
         let secret = config::secret();
         let derived = config::runtime(&raw, &self.settings, &secret)?;
         let runtime_dir = self.directory.join("runtime");
@@ -339,7 +544,7 @@ mod tests {
         assert!(engine.import_profile(b"hello", "bad.yaml").is_err());
         assert_eq!(engine.status().config_name.as_deref(), Some("good.yaml"));
         assert!(
-            String::from_utf8(fs::read(dir.path().join("profile.yaml")).unwrap())
+            String::from_utf8(fs::read(engine.active_profile_path().unwrap()).unwrap())
                 .unwrap()
                 .starts_with("proxies:")
         );
@@ -349,6 +554,64 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(ensure_ports_available(port, if port == 19090 { 19091 } else { 19090 }).is_err());
+    }
+
+    #[test]
+    fn upgrades_the_preview_single_profile_without_modifying_its_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = b"proxies: []\nrules: []\n";
+        fs::write(dir.path().join("profile.yaml"), raw).unwrap();
+        let settings = Settings {
+            config_name: Some("legacy.yaml".into()),
+            ..Settings::default()
+        };
+        settings.save(dir.path()).unwrap();
+        let mut engine = Engine::new(dir.path().to_path_buf()).unwrap();
+        assert_eq!(engine.status().profiles.len(), 1);
+        assert_eq!(
+            fs::read(engine.active_profile_path().unwrap()).unwrap(),
+            raw
+        );
+        assert_eq!(fs::read(dir.path().join("profile.yaml")).unwrap(), raw);
+        drop(engine);
+        assert_eq!(
+            Engine::new(dir.path().to_path_buf())
+                .unwrap()
+                .status()
+                .profiles
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn retains_profiles_and_rejects_unknown_ids_without_changing_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(dir.path().to_path_buf()).unwrap();
+        let first = engine
+            .import_profile(b"proxies: []\nrules: []", "first.yaml")
+            .unwrap();
+        let first_id = first.active_profile_id.unwrap();
+        engine
+            .import_profile(b"proxies: []\nrules: [MATCH,DIRECT]", "second.yaml")
+            .unwrap();
+        assert_eq!(engine.status().profiles.len(), 2);
+        let selected = engine.select_profile(&first_id).await.unwrap();
+        assert_eq!(selected.config_name.as_deref(), Some("first.yaml"));
+        assert!(engine.select_profile("../../settings").await.is_err());
+        assert_eq!(
+            engine.status().active_profile_id.as_deref(),
+            Some(first_id.as_str())
+        );
+        engine
+            .import_profile(b"proxies: []\nrules: []", "renamed.yaml")
+            .unwrap();
+        assert_eq!(engine.status().profiles.len(), 2);
+        assert_eq!(engine.status().config_name.as_deref(), Some("renamed.yaml"));
+        assert_eq!(
+            Settings::load(dir.path()).unwrap().config_name.as_deref(),
+            Some("renamed.yaml")
+        );
     }
 
     fn fixture() -> &'static Path {
@@ -448,5 +711,85 @@ mod tests {
         let status = engine.status();
         assert!(!status.running);
         assert!(status.last_error.unwrap().contains("exited unexpectedly"));
+    }
+
+    #[tokio::test]
+    async fn failed_live_profile_switch_restores_previous_running_core() {
+        let (_directory, mut engine) = configured_engine(b"proxies: []\nrules: []\n");
+        engine.start().await.unwrap();
+        let original = engine.status().active_profile_id.unwrap();
+        let error = engine
+            .import_and_activate(b"proxies: []\nfixture-invalid: true\n", "invalid.yaml")
+            .await
+            .unwrap_err();
+        assert!(error.contains("configuration check failed"));
+        let status = engine.status();
+        assert!(status.running);
+        assert_eq!(status.active_profile_id.as_deref(), Some(original.as_str()));
+        assert_eq!(status.profiles.len(), 2);
+        engine.stop().unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_switch_restart_and_log_clear_use_the_managed_core() {
+        let (_directory, mut engine) = configured_engine(b"proxies: []\nrules: []\n");
+        engine.start().await.unwrap();
+        let status = engine
+            .import_and_activate(b"proxies: []\nrules: [MATCH,DIRECT]", "second.yaml")
+            .await
+            .unwrap();
+        assert!(status.running);
+        assert_eq!(status.config_name.as_deref(), Some("second.yaml"));
+        assert!(engine.restart().await.unwrap().running);
+        assert!(!engine.log_lines().is_empty());
+        engine.clear_logs().unwrap();
+        assert!(engine.log_lines().is_empty());
+        engine.stop().unwrap();
+    }
+
+    #[tokio::test]
+    async fn startup_failure_rolls_back_the_active_pointer_on_disk() {
+        let (directory, mut engine) = configured_engine(b"proxies: []\nrules: []\n");
+        engine.start().await.unwrap();
+        let original = engine.status().active_profile_id.unwrap();
+        let error = engine
+            .import_and_activate(b"proxies: []\nfixture-startup-exit: true\n", "exits.yaml")
+            .await
+            .unwrap_err();
+        assert!(error.contains("previous profile was restored"));
+        assert!(engine.status().running);
+        assert_eq!(
+            Settings::load(directory.path())
+                .unwrap()
+                .active_profile_id
+                .as_deref(),
+            Some(original.as_str())
+        );
+        assert!(!directory
+            .path()
+            .join("runtime/validate-profile.yaml")
+            .exists());
+        engine.stop().unwrap();
+    }
+
+    #[test]
+    fn missing_legacy_profile_does_not_prevent_reimport() {
+        let directory = tempfile::tempdir().unwrap();
+        Settings {
+            config_name: Some("missing.yaml".into()),
+            ..Settings::default()
+        }
+        .save(directory.path())
+        .unwrap();
+        let mut engine = Engine::new(directory.path().to_path_buf()).unwrap();
+        assert!(engine
+            .status()
+            .last_error
+            .unwrap()
+            .contains("Import it again"));
+        assert!(engine.status().config_name.is_none());
+        engine.import_profile(b"proxies: []", "new.yaml").unwrap();
+        assert!(engine.status().last_error.is_none());
+        assert_eq!(engine.status().config_name.as_deref(), Some("new.yaml"));
     }
 }

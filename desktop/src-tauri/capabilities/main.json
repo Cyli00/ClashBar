@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Only the bundled application window may invoke the narrow Rust command API.",
-  "windows": ["main"],
+  "description": "Only the bundled tray popup and its owned attached menu may invoke the narrow Rust command API.",
+  "windows": ["main", "submenu"],
   "permissions": ["core:default"]
 }

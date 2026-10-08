@@ -1,16 +1,21 @@
 pub mod config;
 pub mod controller;
 pub mod engine;
+pub mod panel_geometry;
+pub mod popup_state;
 pub mod process;
 pub mod subscription;
 pub mod system_proxy;
+
+#[cfg(feature = "desktop")]
+pub mod popup;
 
 #[cfg(feature = "desktop")]
 mod desktop {
     use crate::{
         controller::Snapshot,
         engine::{self, Engine, Status},
-        subscription,
+        popup, subscription,
     };
     use serde_json::Value;
     use std::{
@@ -21,7 +26,7 @@ mod desktop {
         },
         time::Duration,
     };
-    use tauri::{AppHandle, Manager, State};
+    use tauri::{AppHandle, Emitter, Manager, State};
     use tauri_plugin_dialog::DialogExt;
     use tokio::sync::Mutex;
 
@@ -41,14 +46,19 @@ mod desktop {
         title: &str,
         extensions: &[&str],
     ) -> Result<Option<PathBuf>, String> {
+        let _dialog_guard = popup::DialogGuard::new(app);
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.dialog()
+        let mut dialog = app
+            .dialog()
             .file()
             .set_title(title)
-            .add_filter(title, extensions)
-            .pick_file(move |file| {
-                let _ = sender.send(file);
-            });
+            .add_filter(title, extensions);
+        if let Some(window) = app.get_webview_window("main") {
+            dialog = dialog.set_parent(&window);
+        }
+        dialog.pick_file(move |file| {
+            let _ = sender.send(file);
+        });
         receiver
             .await
             .map_err(|_| "The file picker was closed unexpectedly.".to_string())?
@@ -76,7 +86,7 @@ mod desktop {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("Imported profile");
-            engine.import_profile(&bytes, name)
+            engine.import_and_activate(&bytes, name).await
         } else {
             Ok(engine.status())
         }
@@ -84,17 +94,13 @@ mod desktop {
 
     #[tauri::command]
     async fn import_subscription(url: String, state: State<'_, Shared>) -> Result<Status, String> {
-        let mut engine = state.lock().await;
-        if engine.status().running {
-            return Err("Stop the core before importing a subscription.".into());
-        }
         let bytes = subscription::download(&url).await?;
         // The full subscription URL often contains credentials and is never persisted or logged.
         let name = subscription::validate_url(&url)?
             .host_str()
             .unwrap_or("HTTPS subscription")
             .to_owned();
-        engine.import_profile(&bytes, &name)
+        state.lock().await.import_and_activate(&bytes, &name).await
     }
 
     #[tauri::command]
@@ -115,6 +121,49 @@ mod desktop {
     #[tauri::command]
     async fn stop_core(state: State<'_, Shared>) -> Result<Status, String> {
         state.lock().await.stop()
+    }
+    #[tauri::command]
+    async fn restart_core(state: State<'_, Shared>) -> Result<Status, String> {
+        state.lock().await.restart().await
+    }
+    #[tauri::command]
+    async fn select_profile(id: String, state: State<'_, Shared>) -> Result<Status, String> {
+        state.lock().await.select_profile(&id).await
+    }
+    #[tauri::command]
+    async fn clear_logs(state: State<'_, Shared>) -> Result<(), String> {
+        state.lock().await.clear_logs()
+    }
+    #[tauri::command]
+    async fn close_all_connections(state: State<'_, Shared>) -> Result<(), String> {
+        state
+            .lock()
+            .await
+            .controller()?
+            .close_all_connections()
+            .await
+    }
+    #[tauri::command]
+    async fn provider_healthcheck(name: String, state: State<'_, Shared>) -> Result<(), String> {
+        state
+            .lock()
+            .await
+            .controller()?
+            .provider_healthcheck(&name)
+            .await
+    }
+    #[tauri::command]
+    async fn test_group_delay(name: String, state: State<'_, Shared>) -> Result<Value, String> {
+        state
+            .lock()
+            .await
+            .controller()?
+            .test_group_delay(&name)
+            .await
+    }
+    #[tauri::command]
+    async fn set_log_level(level: String, state: State<'_, Shared>) -> Result<(), String> {
+        state.lock().await.controller()?.set_log_level(&level).await
     }
     #[tauri::command]
     async fn set_system_proxy(enabled: bool, state: State<'_, Shared>) -> Result<Status, String> {
@@ -164,11 +213,12 @@ mod desktop {
     }
 
     fn show(app: &AppHandle) {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+        let _ = popup::show(app);
+    }
+
+    #[tauri::command]
+    fn quit_app(app: AppHandle) {
+        quit(&app);
     }
 
     fn quit(app: &AppHandle) {
@@ -191,8 +241,9 @@ mod desktop {
                         .pending
                         .store(false, Ordering::SeqCst);
                     show(&app);
+                    let dialog_guard = popup::DialogGuard::new(&app);
                     app.dialog().message(format!("ClashBar could not restore the system proxy and will remain open.\n\n{error}\n\nCorrect the Windows proxy settings, then try Quit again."))
-                        .title("Cannot safely quit ClashBar").kind(tauri_plugin_dialog::MessageDialogKind::Error).show(|_| {});
+                        .title("Cannot safely quit ClashBar").kind(tauri_plugin_dialog::MessageDialogKind::Error).show(move |_| drop(dialog_guard));
                 }
             }
         });
@@ -202,6 +253,7 @@ mod desktop {
         tauri::Builder::default()
             .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
             .plugin(tauri_plugin_dialog::init())
+            .manage(popup::PopupState::default())
             .manage(QuitState {
                 finished: AtomicBool::new(false),
                 pending: AtomicBool::new(false),
@@ -211,6 +263,7 @@ mod desktop {
                 let engine = Engine::new(directory).map_err(std::io::Error::other)?;
                 let shared = Arc::new(Mutex::new(engine));
                 app.manage(shared.clone());
+                popup::configure_windows(app.handle()).map_err(std::io::Error::other)?;
                 let show_item = tauri::menu::MenuItem::with_id(
                     app,
                     "show",
@@ -220,12 +273,34 @@ mod desktop {
                 )?;
                 let quit_item =
                     tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-                let menu = tauri::menu::Menu::with_items(app, &[&show_item, &quit_item])?;
-                let mut tray = tauri::tray::TrayIconBuilder::new()
+                let settings_item = tauri::menu::MenuItem::with_id(
+                    app,
+                    "settings",
+                    "System settings",
+                    true,
+                    None::<&str>,
+                )?;
+                let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
+                let menu = tauri::menu::Menu::with_items(
+                    app,
+                    &[&show_item, &settings_item, &separator, &quit_item],
+                )?;
+                let mut tray = tauri::tray::TrayIconBuilder::with_id(popup::TRAY_ID)
                     .tooltip("ClashBar")
                     .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_tray_icon_event(|tray, event| {
+                        popup::on_tray_event(tray.app_handle(), event)
+                    })
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "show" => show(app),
+                        "settings" => {
+                            show(app);
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ =
+                                    window.emit("popup-tab", serde_json::json!({"tab":"system"}));
+                            }
+                        }
                         "quit" => quit(app),
                         _ => {}
                     });
@@ -233,19 +308,30 @@ mod desktop {
                     tray = tray.icon(icon.clone());
                 }
                 tray.build(app)?;
+                let monitor_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     loop {
                         tokio::time::sleep(Duration::from_secs(1)).await;
-                        shared.lock().await.refresh();
+                        let status = shared.lock().await.status();
+                        if let Some(tray) = monitor_app.tray_by_id(popup::TRAY_ID) {
+                            let tooltip = format!(
+                                "ClashBar · {} · {}",
+                                if status.running { "Running" } else { "Stopped" },
+                                if status.system_proxy {
+                                    "System proxy on"
+                                } else {
+                                    "System proxy off"
+                                }
+                            );
+                            let _ = tray.set_tooltip(Some(tooltip));
+                        }
+                        popup::refresh_position(&monitor_app);
                     }
                 });
                 Ok(())
             })
             .on_window_event(|window, event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
+                popup::on_window_event(window.app_handle(), window.label(), event);
             })
             .invoke_handler(tauri::generate_handler![
                 get_status,
@@ -262,7 +348,24 @@ mod desktop {
                 test_delay,
                 close_connection,
                 update_provider,
-                get_logs
+                get_logs,
+                clear_logs,
+                restart_core,
+                select_profile,
+                close_all_connections,
+                provider_healthcheck,
+                test_group_delay,
+                set_log_level,
+                quit_app,
+                popup::resize_popup,
+                popup::hide_popup,
+                popup::set_popup_pinned,
+                popup::get_popup_pinned,
+                popup::show_attached_menu,
+                popup::hide_attached_menu,
+                popup::get_attached_menu,
+                popup::attached_menu_action,
+                popup::attached_menu_hover
             ])
             .build(tauri::generate_context!())
             .expect("Unable to initialize ClashBar")

@@ -11,12 +11,20 @@ use std::{
 pub const MAX_CONFIG_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub core_path: Option<PathBuf>,
     pub config_name: Option<String>,
     pub mixed_port: u16,
     pub controller_port: u16,
+    pub profiles: Vec<Profile>,
+    pub active_profile_id: Option<String>,
 }
 
 impl Default for Settings {
@@ -26,6 +34,8 @@ impl Default for Settings {
             config_name: None,
             mixed_port: 7890,
             controller_port: 19090,
+            profiles: Vec::new(),
+            active_profile_id: None,
         }
     }
 }
@@ -40,6 +50,17 @@ impl Settings {
             Err(e) => return Err(format!("Cannot open saved settings: {e}")),
         };
         validate_ports(settings.mixed_port, settings.controller_port)?;
+        if settings.profiles.len() > 128
+            || settings.profiles.iter().any(|profile| {
+                profile.id.len() != 64 || !profile.id.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+            || settings
+                .active_profile_id
+                .as_ref()
+                .is_some_and(|id| !settings.profiles.iter().any(|profile| &profile.id == id))
+        {
+            return Err("Saved profile metadata is invalid.".into());
+        }
         Ok(settings)
     }
 

@@ -81,6 +81,17 @@ jobs:
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Build NSIS installer
         run: npm run tauri build -- --bundles nsis -- --locked
+      - name: Native packaged popup smoke on disposable runner
+        shell: pwsh
+        run: ./tests/windows-popup-smoke.ps1
+      - name: Native popup rendering evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-popup-evidence
+          path: desktop/test-results/native-popup.png
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: clashbar-windows-x64
