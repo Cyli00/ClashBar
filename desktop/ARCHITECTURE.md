@@ -26,7 +26,11 @@ This is a project-specific tradeoff, not a performance benchmark or a claim that
 
 ## Incremental migration
 
-The initial PR covers the usable local proxy loop and installs a Windows build pipeline. Follow-up work should be individually reviewable: multi-profile and remote-machine parity; streaming metrics/logs; a separately designed privileged Windows TUN service; SSID policy; startup/update lifecycle; localization; macOS/Linux platform adapters.
+The initial PR covers the usable local proxy loop and installs a Windows build pipeline. Follow-up work should be individually reviewable: remote-machine parity; streaming metrics/logs; a separately designed privileged Windows TUN service; SSID policy; startup/update lifecycle; localization; macOS/Linux platform adapters.
+
+The tray popup follows the original SwiftUI layout tokens: 360 logical pixels wide, 8-pixel inner margins, compact monospaced controls and a fixed header/footer. The main window starts hidden, has no decorations or taskbar entry, and anchors to the tray monitor's work area. A separate owned WebView displays adjacent menus rather than expanding the main window into an invisible click-catching surface. Popup pinning, focus transitions, native file pickers and tray clicks share one native state owner.
+
+Profiles use content-addressed source files and one atomic settings pointer. Importing retains prior profiles. A live switch validates the candidate with the selected core before stopping the working one; startup and proxy restoration precede committing the new pointer. Failed activation attempts restore the previous managed process. An invalid legacy profile does not prevent opening the UI to re-import.
 
 Do not remove the Swift implementation until replacement functionality and platform tests establish parity. See [README](README.md) for the explicit current support matrix and limitations.
 

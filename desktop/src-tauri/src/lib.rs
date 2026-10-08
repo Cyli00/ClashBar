@@ -11,11 +11,14 @@ pub mod system_proxy;
 pub mod popup;
 
 #[cfg(feature = "desktop")]
+mod tray_icons;
+
+#[cfg(feature = "desktop")]
 mod desktop {
     use crate::{
         controller::Snapshot,
         engine::{self, Engine, Status},
-        popup, subscription,
+        popup, subscription, tray_icons,
     };
     use serde_json::Value;
     use std::{
@@ -212,6 +215,13 @@ mod desktop {
         Ok(state.lock().await.log_lines())
     }
 
+    #[tauri::command]
+    async fn get_log_entries(
+        state: State<'_, Shared>,
+    ) -> Result<Vec<crate::process::LogEntry>, String> {
+        Ok(state.lock().await.log_entries())
+    }
+
     fn show(app: &AppHandle) {
         let _ = popup::show(app);
     }
@@ -267,26 +277,24 @@ mod desktop {
                 let show_item = tauri::menu::MenuItem::with_id(
                     app,
                     "show",
-                    "Open ClashBar",
+                    "打开 ClashBar",
                     true,
                     None::<&str>,
                 )?;
                 let quit_item =
-                    tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-                let settings_item = tauri::menu::MenuItem::with_id(
-                    app,
-                    "settings",
-                    "System settings",
-                    true,
-                    None::<&str>,
-                )?;
+                    tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+                let settings_item =
+                    tauri::menu::MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
                 let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
                 let menu = tauri::menu::Menu::with_items(
                     app,
                     &[&show_item, &settings_item, &separator, &quit_item],
                 )?;
-                let mut tray = tauri::tray::TrayIconBuilder::with_id(popup::TRAY_ID)
-                    .tooltip("ClashBar")
+                let icons = tray_icons::TrayIcons::load()?;
+                let initial_light_taskbar = tray_icons::light_taskbar();
+                let tray = tauri::tray::TrayIconBuilder::with_id(popup::TRAY_ID)
+                    .tooltip("ClashBar · 已停止 · 未接管系统代理")
+                    .icon(icons.image(false, initial_light_taskbar))
                     .menu(&menu)
                     .show_menu_on_left_click(false)
                     .on_tray_icon_event(|tray, event| {
@@ -304,26 +312,41 @@ mod desktop {
                         "quit" => quit(app),
                         _ => {}
                     });
-                if let Some(icon) = app.default_window_icon() {
-                    tray = tray.icon(icon.clone());
-                }
                 tray.build(app)?;
                 let monitor_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    let mut last_running = false;
+                    let mut last_light_taskbar = initial_light_taskbar;
+                    let mut last_tooltip = String::new();
                     loop {
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         let status = shared.lock().await.status();
                         if let Some(tray) = monitor_app.tray_by_id(popup::TRAY_ID) {
                             let tooltip = format!(
                                 "ClashBar · {} · {}",
-                                if status.running { "Running" } else { "Stopped" },
-                                if status.system_proxy {
-                                    "System proxy on"
+                                if status.running {
+                                    "运行中"
                                 } else {
-                                    "System proxy off"
+                                    "已停止"
+                                },
+                                if status.system_proxy {
+                                    "已接管系统代理"
+                                } else {
+                                    "未接管系统代理"
                                 }
                             );
-                            let _ = tray.set_tooltip(Some(tooltip));
+                            if tooltip != last_tooltip {
+                                let _ = tray.set_tooltip(Some(&tooltip));
+                                last_tooltip = tooltip;
+                            }
+                            let light_taskbar = tray_icons::light_taskbar();
+                            if status.running != last_running || light_taskbar != last_light_taskbar
+                            {
+                                let _ =
+                                    tray.set_icon(Some(icons.image(status.running, light_taskbar)));
+                                last_running = status.running;
+                                last_light_taskbar = light_taskbar;
+                            }
                         }
                         popup::refresh_position(&monitor_app);
                     }
@@ -349,6 +372,7 @@ mod desktop {
                 close_connection,
                 update_provider,
                 get_logs,
+                get_log_entries,
                 clear_logs,
                 restart_core,
                 select_profile,

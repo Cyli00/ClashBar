@@ -305,7 +305,7 @@ impl Engine {
         Ok(self.status())
     }
 
-    async fn validate_candidate(&self, raw: &[u8], settings: &Settings) -> Result<(), String> {
+    async fn validate_candidate(&mut self, raw: &[u8], settings: &Settings) -> Result<(), String> {
         let executable = settings
             .core_path
             .as_ref()
@@ -324,12 +324,12 @@ impl Engine {
         }
         let path = directory.join("validate-profile.yaml");
         config::atomic_write(&path, &derived)?;
-        let result = async {
-            ManagedChild::spawn(executable, &directory, &path, true, &self.logs, &secret)?
-                .validate()
-                .await
-        }
-        .await;
+        let candidate =
+            ManagedChild::spawn(executable, &directory, &path, true, &self.logs, &secret);
+        let result = match candidate {
+            Ok(child) => child.validate().await,
+            Err(error) => Err(error),
+        };
         let _ = fs::remove_file(path);
         result
     }
@@ -501,7 +501,13 @@ impl Engine {
     pub fn log_lines(&self) -> Vec<String> {
         self.logs
             .lock()
-            .map(|lines| lines.iter().cloned().collect())
+            .map(|lines| lines.iter().map(|entry| entry.message.clone()).collect())
+            .unwrap_or_default()
+    }
+    pub fn log_entries(&self) -> Vec<process::LogEntry> {
+        self.logs
+            .lock()
+            .map(|entries| entries.iter().cloned().collect())
             .unwrap_or_default()
     }
 }

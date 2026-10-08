@@ -10,9 +10,9 @@
 
 此 fork 在 `desktop/` 中实现 Windows 托盘代理客户端，将界面与客户端服务迁移到 TypeScript + Rust，继续使用独立的 [mihomo](https://github.com/MetaCubeX/mihomo) 内核。
 
-支持配置导入、内核验证/启动/停止、模式与节点切换、测速、Provider 更新、规则与连接查看，以及 Windows 当前用户系统代理管理。关闭窗口会隐藏到托盘，退出时恢复原代理设置。
+界面沿原版 SwiftUI 的 360px 菜单面板复刻：点击 Windows 托盘图标展开或收起，固定面板后保持显示，节点与配置使用独立的侧边菜单；没有常驻大窗口或任务栏入口。支持多配置导入与切换、内核验证/启动/停止/重启、模式与节点切换、测速、Provider 更新、规则、连接与日志，以及 Windows 当前用户系统代理管理。退出时恢复原代理设置。
 
-**这是分阶段迁移，尚未达到原 macOS 版本的功能等价。** TUN/管理员服务、SSID 策略、远程机器、自动更新、多配置与中英切换尚未迁移。完整范围、配置覆盖行为与崩溃恢复限制见 [Windows README](desktop/README.md)。现有 SwiftUI/AppKit 源码继续保留，Windows 构建不依赖它。
+**这是分阶段迁移，尚未达到原 macOS 版本的功能等价。** TUN/管理员服务、SSID 策略、远程机器、自动更新与中英切换尚未迁移。完整范围、配置覆盖行为与崩溃恢复限制见 [Windows README](desktop/README.md) 与 [原版对照表](desktop/PARITY.md)。现有 SwiftUI/AppKit 源码继续保留，Windows 构建不依赖它。
 
 ## 快速开始
 

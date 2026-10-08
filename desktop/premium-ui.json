@@ -4,7 +4,7 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast", "CRUD"],
-  "ownership": { "Select/Listbox": "native" },
+  "ownership": { "Select/Listbox": "authored" },
   "requiredCommands": ["unit", "typecheck", "build", "e2e"],
   "commands": {
     "unit": "npm test",

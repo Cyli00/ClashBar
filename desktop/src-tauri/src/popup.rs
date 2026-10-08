@@ -759,9 +759,9 @@ fn restore_tool_style(window: &WebviewWindow) -> Result<(), String> {
         use windows_sys::Win32::{
             Foundation::{GetLastError, SetLastError},
             UI::WindowsAndMessaging::{
-                GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_APPWINDOW,
-                WS_EX_TOOLWINDOW,
+                GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+                SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+                WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_THICKFRAME,
             },
         };
         let hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as _;
@@ -773,6 +773,15 @@ fn restore_tool_style(window: &WebviewWindow) -> Result<(), String> {
             if SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style) == 0 && GetLastError() != 0 {
                 return Err(format!(
                     "Cannot configure the tray tool window: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let old = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            let style = old & !((WS_CAPTION | WS_THICKFRAME) as isize);
+            SetLastError(0);
+            if SetWindowLongPtrW(hwnd, GWL_STYLE, style) == 0 && GetLastError() != 0 {
+                return Err(format!(
+                    "Cannot remove the native window frame: {}",
                     std::io::Error::last_os_error()
                 ));
             }

@@ -6,7 +6,7 @@ export default defineConfig({
   fullyParallel: true,
   timeout: 30000,
   use: {
-    baseURL: 'http://127.0.0.1:1420', headless: true, viewport: { width: 860, height: 760 },
+    baseURL: 'http://127.0.0.1:1420', headless: true, viewport: { width: 360, height: 760 },
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? {
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
       args: ['--no-sandbox', '--disable-dev-shm-usage'],

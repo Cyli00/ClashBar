@@ -4,20 +4,38 @@ use std::{
     path::Path,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub type Logs = Arc<Mutex<VecDeque<String>>>;
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LogEntry {
+    pub timestamp: u64,
+    pub source: &'static str,
+    pub message: String,
+}
+
+pub type Logs = Arc<Mutex<VecDeque<LogEntry>>>;
 pub fn logs() -> Logs {
     Arc::new(Mutex::new(VecDeque::with_capacity(500)))
 }
 
 pub fn append(logs: &Logs, message: impl Into<String>) {
+    append_from(logs, "ClashBar", message);
+}
+
+fn append_from(logs: &Logs, source: &'static str, message: impl Into<String>) {
     if let Ok(mut lines) = logs.lock() {
         if lines.len() >= 500 {
             lines.pop_front();
         }
-        lines.push_back(message.into().chars().take(4096).collect());
+        lines.push_back(LogEntry {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            source,
+            message: message.into().chars().take(4096).collect(),
+        });
     }
 }
 
@@ -60,11 +78,11 @@ fn emit_line(logs: &Logs, line: &[u8], secret: &str) {
     .iter()
     .any(|pattern| lower.contains(pattern))
     {
-        append(logs, "[sensitive core output omitted]");
+        append_from(logs, "Mihomo", "[sensitive core output omitted]");
     } else if secret.is_empty() {
-        append(logs, value.into_owned());
+        append_from(logs, "Mihomo", value.into_owned());
     } else {
-        append(logs, value.replace(secret, "[redacted]"));
+        append_from(logs, "Mihomo", value.replace(secret, "[redacted]"));
     }
 }
 
@@ -237,7 +255,10 @@ mod tests {
         emit_line(&logs, b"token-private", "private");
         let lines = logs.lock().unwrap();
         assert_eq!(lines.len(), 500);
-        assert_eq!(lines.back().unwrap(), "token-[redacted]");
+        assert_eq!(lines.back().unwrap().message, "token-[redacted]");
+        assert_eq!(lines.back().unwrap().source, "Mihomo");
+        assert_eq!(lines.front().unwrap().source, "ClashBar");
+        assert!(lines.back().unwrap().timestamp > 0);
     }
     #[test]
     fn subscription_urls_do_not_reach_frontend_logs() {
@@ -248,7 +269,7 @@ mod tests {
             "secret",
         );
         assert_eq!(
-            logs.lock().unwrap().back().unwrap(),
+            logs.lock().unwrap().back().unwrap().message,
             "[sensitive core output omitted]"
         );
     }
