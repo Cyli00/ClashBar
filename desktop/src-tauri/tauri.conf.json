@@ -21,7 +21,7 @@
       "maximizable": false,
       "minimizable": false,
       "transparent": true,
-      "shadow": true,
+      "shadow": false,
       "skipTaskbar": true,
       "alwaysOnTop": true,
       "focus": false
@@ -37,7 +37,7 @@
       "maximizable": false,
       "minimizable": false,
       "transparent": true,
-      "shadow": true,
+      "shadow": false,
       "skipTaskbar": true,
       "alwaysOnTop": true,
       "focus": false

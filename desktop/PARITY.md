@@ -46,7 +46,7 @@ The native dialog guard keeps file selection from accidentally dismissing the pa
 
 ## Explicit remaining differences
 
-- **Platform appearance:** WebView2 cannot reproduce AppKit vibrancy, Apple fonts or SF Symbols byte-for-byte. The port reuses the original logo and geometry, follows light/dark appearance, and uses available monospaced fonts/equivalent icons. OS-specific text metrics and material effects still need visual acceptance on Windows.
+- **Platform appearance:** WebView2 cannot reproduce AppKit vibrancy, Apple fonts or SF Symbols byte-for-byte. The port reuses the original logo and geometry, follows light/dark appearance, and uses available monospaced fonts/equivalent icons. Native undecorated-window shadows are disabled because Tao reserves hidden non-client insets for them; both the HWND and usable content must remain 360 logical pixels wide. OS-specific text metrics and material effects still need visual acceptance on Windows.
 - **Tray presentation:** Windows has a notification-area icon, not a macOS variable-width menu-bar item. Two-line traffic text in the tray is not reproduced; traffic remains in the panel.
 - **Telemetry:** the original streams traffic/connections/logs. This port samples controller totals while visible and reads bounded process output; its chart timing and log content are not identical. Captured log entries carry real timestamps and source labels, and are merged chronologically.
 - **Unmigrated services:** TUN/privileged helper, LAN listener exposure, remote machine management, SSID policy, scheduled subscription updates, autostart, automatic core/client updates and language switching remain unavailable. Associated controls must be clearly unavailable rather than report success.

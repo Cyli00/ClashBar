@@ -48,6 +48,8 @@ public static class ClashBarPopupSmoke
     public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetWindowRect(IntPtr window, out Rect bounds);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetClientRect(IntPtr window, out Rect bounds);
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll")]
@@ -216,6 +218,10 @@ function Assert-PopupGeometry {
     Assert-Condition ($dpi -gt 0) 'GetDpiForWindow returned zero.'
     $logicalWidth = ($bounds.Right - $bounds.Left) * 96.0 / $dpi
     Assert-Condition ([Math]::Abs($logicalWidth - 360) -le 1) "Expected a 360-point popup, got $logicalWidth at $dpi DPI."
+    $client = [ClashBarPopupSmoke+Rect]::new()
+    Assert-Condition ([ClashBarPopupSmoke]::GetClientRect($script:mainWindow, [ref]$client)) 'GetClientRect failed.'
+    $clientWidth = ($client.Right - $client.Left) * 96.0 / $dpi
+    Assert-Condition ([Math]::Abs($clientWidth - 360) -le 1) "Expected 360 points of usable popup content, got $clientWidth at $dpi DPI."
 
     $monitor = [ClashBarPopupSmoke]::MonitorFromWindow($script:mainWindow, 2)
     Assert-Condition ($monitor -ne [IntPtr]::Zero) 'No monitor was associated with the popup.'
