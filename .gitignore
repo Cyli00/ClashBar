@@ -20,3 +20,10 @@ Fix*.md
 .codegraph
 .cursor
 .pnpm-store/
+# Rust/Tauri desktop client
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/test-results/
+/desktop/playwright-report/

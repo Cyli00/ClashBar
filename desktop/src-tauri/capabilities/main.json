@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Only the bundled application window may invoke the narrow Rust command API.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
