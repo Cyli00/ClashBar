@@ -75,6 +75,18 @@ test('browser-only popup is honest, compact and cannot mutate desktop state', as
   expect(await page.locator('.menu-panel').evaluate(node => node.getBoundingClientRect().width)).toBe(360);
 });
 
+test('first native show refreshes a hidden startup without a document visibility event', async ({ page }) => {
+  await installBridge(page);
+  // Model a WebView whose native show notification arrives before hidden updates.
+  await page.addInitScript(() => Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }));
+  await page.goto('/');
+  await expect.poll(() => page.evaluate(() => (window as any).testState.commands.some((call: any) => call.command === 'plugin:event|listen' && call.args.event === 'popup-visibility'))).toBe(true);
+  expect(await page.evaluate(() => (window as any).testState.commands.filter((call: any) => call.command === 'get_status').length)).toBe(0);
+  await page.evaluate(() => (window as any).testState.emit('popup-visibility', { visible: true, pinned: false }));
+  await expect(page.getByRole('button', { name: '代理组 手动切换', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).testState.commands.filter((call: any) => call.command === 'get_snapshot').length)).toBe(1);
+});
+
 test('source-style populated popup renders at 360px in light and dark', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 360, height: 900 }); await installBridge(page); await page.goto('/');
   await expect(page.getByRole('button', { name: '代理组 手动切换', exact: true })).toBeVisible();

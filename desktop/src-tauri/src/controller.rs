@@ -299,6 +299,7 @@ mod tests {
     use std::{
         io::{Read, Write},
         net::{TcpListener, TcpStream},
+        sync::mpsc,
         thread::{self, JoinHandle},
         time::Instant,
     };
@@ -334,6 +335,10 @@ mod tests {
     }
 
     fn read_request(stream: &mut TcpStream) -> Request {
+        // Winsock accept inherits the listener's nonblocking mode. The listener
+        // polls with a deadline, but this HTTP parser requires blocking reads
+        // with its own timeout (including when a request arrives in fragments).
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();
@@ -444,6 +449,43 @@ mod tests {
             Response::new("GET", "/connections", 200, connections),
             Response::new("GET", "/providers/proxies", 200, json!({"providers": {}})),
         ]
+    }
+
+    #[test]
+    fn fixture_reads_delayed_fragmented_requests_from_nonblocking_streams() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        // Reproduce Windows accepted-socket inheritance on every test platform.
+        stream.set_nonblocking(true).unwrap();
+        let (finished, completion) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let request = read_request(&mut stream);
+            finished.send(()).unwrap();
+            request
+        });
+
+        // No bytes are available yet. The parser must wait, not panic with
+        // WouldBlock. A dropped sender also fails this assertion.
+        assert!(matches!(
+            completion.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        client
+            .write_all(b"PATCH /configs HTTP/1.1\r\nAuthorization: Bearer fixture-secret\r\nContent-Length: 4\r\n\r\nab")
+            .unwrap();
+        // The complete header must not make an incomplete body look complete.
+        assert!(matches!(
+            completion.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        client.write_all(b"cd").unwrap();
+        completion.recv_timeout(Duration::from_secs(3)).unwrap();
+        let request = server.join().unwrap();
+        assert_eq!(request.method, "PATCH");
+        assert_eq!(request.target, "/configs");
+        assert_eq!(request.authorization, "Bearer fixture-secret");
+        assert_eq!(request.body, b"abcd");
     }
 
     #[test]

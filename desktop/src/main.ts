@@ -394,8 +394,9 @@ function sampleTraffic(next: Snapshot) {
   const now = performance.now(); if (lastSample && now > lastSample.time) { const seconds = (now - lastSample.time) / 1000; rateUp = Math.max(0, (next.connections.uploadTotal - lastSample.up) / seconds); rateDown = Math.max(0, (next.connections.downloadTotal - lastSample.down) / seconds); trafficSamples.push({ up: rateUp, down: rateDown }); if (trafficSamples.length > 60) trafficSamples.shift(); }
   lastSample = { time: now, up: next.connections.uploadTotal, down: next.connections.downloadTotal };
 }
-async function refresh() {
-  if (!desktop || busy || refreshing || document.hidden || !popupVisible) return;
+async function refresh(nativeVisible = false) {
+  // The native show event can precede WebView2's document visibility update.
+  if (!desktop || busy || refreshing || (!nativeVisible && document.hidden) || !popupVisible) return;
   const ticket = epoch.next(); refreshing = true; updateChrome();
   try {
     const nextStatus = await invoke<Status>('get_status'); if (!epoch.current(ticket)) return; status = nextStatus;
@@ -431,7 +432,7 @@ async function initializeNative() {
   if (!desktop) return;
   await initializeMenus();
   pinned = await invoke<boolean>('get_popup_pinned');
-  unlisten.push(await listen<{ visible: boolean; pinned: boolean }>('popup-visibility', event => { const reopening = !popupVisible && event.payload.visible; popupVisible = event.payload.visible; pinned = event.payload.pinned; if (reopening) { resetEphemeralState(); lastSample = null; void refresh(); } updateChrome(); }));
+  unlisten.push(await listen<{ visible: boolean; pinned: boolean }>('popup-visibility', event => { const reopening = !popupVisible && event.payload.visible; popupVisible = event.payload.visible; pinned = event.payload.pinned; if (reopening) { resetEphemeralState(); lastSample = null; } if (popupVisible) void refresh(true); updateChrome(); }));
   unlisten.push(await listen<{ tab: string }>('popup-tab', event => { if (event.payload.tab === 'system') activateTab('settings'); }));
   updateChrome();
 }
