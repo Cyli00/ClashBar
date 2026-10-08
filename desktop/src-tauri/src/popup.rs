@@ -1,7 +1,7 @@
 //! Native tray-owned windows. Frontend content never owns placement or dismissal.
 use crate::{
     panel_geometry::{self, Edge, Placement, Rect},
-    popup_state::{BlurAction, PopupStateMachine},
+    popup_state::{ActivationState, BlurAction, PopupStateMachine},
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Mutex, time::Duration};
@@ -27,6 +27,7 @@ struct ActiveMenu {
 }
 
 struct Session {
+    activation: ActivationState,
     state: PopupStateMachine,
     anchor: Option<Rect>,
     requested_height: f64,
@@ -39,6 +40,7 @@ pub struct PopupState(Mutex<Session>);
 impl Default for PopupState {
     fn default() -> Self {
         Self(Mutex::new(Session {
+            activation: ActivationState::default(),
             state: PopupStateMachine::default(),
             anchor: None,
             requested_height: 320.0,
@@ -209,6 +211,34 @@ fn apply_main_layout(app: &AppHandle, preserve_x: bool) -> Result<PopupSize, Str
         height: placement.rect.height / scale,
         max_height: placement.max_height,
     })
+}
+
+pub fn request_show(app: &AppHandle) -> Result<(), String> {
+    let ready = app
+        .state::<PopupState>()
+        .0
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .activation
+        .request();
+    if ready {
+        show(app)?;
+    }
+    Ok(())
+}
+
+pub fn mark_ready(app: &AppHandle) -> Result<(), String> {
+    let pending = app
+        .state::<PopupState>()
+        .0
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .activation
+        .mark_ready();
+    if pending {
+        show(app)?;
+    }
+    Ok(())
 }
 
 pub fn show(app: &AppHandle) -> Result<(), String> {

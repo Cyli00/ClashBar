@@ -42,6 +42,10 @@ public static class ClashBarPopupSmoke
     private static extern int GetWindowLong(IntPtr window, int index);
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr window);
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetWindowRect(IntPtr window, out Rect bounds);
     [DllImport("user32.dll")]
@@ -61,10 +65,10 @@ public static class ClashBarPopupSmoke
         EnumWindowsProc callback = (window, parameter) => {
             uint owner;
             GetWindowThreadProcessId(window, out owner);
-            if (owner == processId) {
+            if (processId == 0 || owner == processId) {
                 var text = new StringBuilder(512);
                 GetWindowTextW(window, text, text.Capacity);
-                if (String.Equals(text.ToString(), title, StringComparison.Ordinal))
+                if (title == null || String.Equals(text.ToString(), title, StringComparison.Ordinal))
                     result.Add(window);
             }
             return true;
@@ -72,6 +76,25 @@ public static class ClashBarPopupSmoke
         if (!EnumWindows(callback, IntPtr.Zero))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         return result.ToArray();
+    }
+
+    public static IntPtr[] FindProcessWindows(int processId)
+    {
+        return FindWindows(processId, null);
+    }
+
+    public static uint WindowProcessId(IntPtr window)
+    {
+        uint processId;
+        GetWindowThreadProcessId(window, out processId);
+        return processId;
+    }
+
+    public static string WindowTitle(IntPtr window)
+    {
+        var text = new StringBuilder(512);
+        GetWindowTextW(window, text, text.Capacity);
+        return text.ToString();
     }
 
     public static long WindowStyle(IntPtr window, int index)
@@ -83,8 +106,62 @@ public static class ClashBarPopupSmoke
 '@
 
 $app = $null
+$script:mainWindow = [IntPtr]::Zero
 $secondaryProcesses = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 $previousDpiContext = [IntPtr]::Zero
+$outputDirectory = Join-Path $PSScriptRoot '../test-results'
+[void](New-Item -ItemType Directory -Path $outputDirectory -Force)
+$diagnosticPath = Join-Path $outputDirectory 'native-popup-diagnostics.log'
+$stdoutPath = Join-Path $outputDirectory 'native-popup-stdout.log'
+$stderrPath = Join-Path $outputDirectory 'native-popup-stderr.log'
+Set-Content -LiteralPath $diagnosticPath -Value "Native popup smoke: $binary"
+
+function Write-NativeDiagnostics([string]$Stage, [switch]$AllProcesses) {
+    try {
+        $foreground = [ClashBarPopupSmoke]::GetForegroundWindow()
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $lines.Add("[$([DateTime]::UtcNow.ToString('o'))] $Stage; main HWND=0x$($script:mainWindow.ToInt64().ToString('X')); foreground HWND=0x$($foreground.ToInt64().ToString('X')); foreground PID=$([ClashBarPopupSmoke]::WindowProcessId($foreground))")
+        $processId = 0
+        if ($null -ne $app) {
+            $app.Refresh()
+            $lines.Add("App PID=$($app.Id); exited=$($app.HasExited)")
+            if ($app.HasExited) { $lines.Add("App exit code=$($app.ExitCode)") }
+            if (-not $AllProcesses) { $processId = $app.Id }
+        }
+        $windows = @([ClashBarPopupSmoke]::FindProcessWindows($processId))
+        # Include a stale main handle as well as every top-level window, so a
+        # destroyed/replaced HWND is distinguishable from a hidden popup.
+        if ($script:mainWindow -ne [IntPtr]::Zero -and $script:mainWindow -notin $windows) {
+            $windows += $script:mainWindow
+        }
+        $lines.Add("Top-level windows: $($windows.Count); scope PID=$processId (0 means all processes)")
+        foreach ($window in $windows) {
+            $bounds = [ClashBarPopupSmoke+Rect]::new()
+            $hasBounds = [ClashBarPopupSmoke]::GetWindowRect($window, [ref]$bounds)
+            $style = [ClashBarPopupSmoke]::WindowStyle($window, -16)
+            $extendedStyle = [ClashBarPopupSmoke]::WindowStyle($window, -20)
+            $lines.Add(('HWND=0x{0:X}; PID={1}; valid={2}; visible={3}; style=0x{4:X}; exStyle=0x{5:X}; boundsValid={6}; bounds=[{7}, {8}, {9}, {10}]; title="{11}"' -f
+                $window.ToInt64(), [ClashBarPopupSmoke]::WindowProcessId($window), [ClashBarPopupSmoke]::IsWindow($window),
+                [ClashBarPopupSmoke]::IsWindowVisible($window), $style, $extendedStyle, $hasBounds,
+                $bounds.Left, $bounds.Top, $bounds.Right, $bounds.Bottom, [ClashBarPopupSmoke]::WindowTitle($window)))
+        }
+        foreach ($line in $lines) { Write-Host $line }
+        Add-Content -LiteralPath $diagnosticPath -Value $lines
+    }
+    catch { Write-Warning "Native window diagnostics unavailable: $_" }
+}
+
+function Write-AppLogs {
+    foreach ($logPath in @($stdoutPath, $stderrPath)) {
+        try {
+            Write-Host "Application log: $logPath"
+            if (Test-Path -LiteralPath $logPath) {
+                Get-Content -LiteralPath $logPath | ForEach-Object { Write-Host $_ }
+            }
+        }
+        catch { Write-Warning "Cannot read application log ${logPath}: $_" }
+    }
+}
 
 function Assert-Condition([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -106,11 +183,14 @@ function Wait-Condition([scriptblock]$Condition, [string]$Description) {
 }
 
 function Open-ExistingInstance {
+    Write-NativeDiagnostics 'Before second-instance activation'
     $secondary = Start-Process -FilePath $binary -WorkingDirectory (Split-Path $binary) -PassThru
     $secondaryProcesses.Add($secondary)
     Assert-Condition ($secondary.WaitForExit(15000)) 'The second launch did not hand off to the existing instance.'
+    Write-NativeDiagnostics "After second-instance handoff (PID $($secondary.Id), exit code $($secondary.ExitCode))"
     Assert-Condition ($secondary.ExitCode -eq 0) "The second launch failed with exit code $($secondary.ExitCode)."
     Wait-Condition { [ClashBarPopupSmoke]::IsWindowVisible($script:mainWindow) } 'the existing popup to appear after a second launch'
+    Write-NativeDiagnostics 'Popup visible after second-instance activation'
     $geometryState = [pscustomobject]@{ Signature = ''; Samples = 0 }
     Wait-Condition {
         $rect = [ClashBarPopupSmoke+Rect]::new()
@@ -183,9 +263,10 @@ try {
     $previousDpiContext = [ClashBarPopupSmoke]::SetThreadDpiAwarenessContext([IntPtr]::new(-4))
     Assert-Condition ($previousDpiContext -ne [IntPtr]::Zero) 'Cannot enable per-monitor DPI awareness for the smoke test.'
 
-    $app = Start-Process -FilePath $binary -WorkingDirectory (Split-Path $binary) -PassThru
+    $app = Start-Process -FilePath $binary -WorkingDirectory (Split-Path $binary) -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
     Wait-Condition { @([ClashBarPopupSmoke]::FindWindows($app.Id, 'ClashBar')).Count -eq 1 } 'the main native window to be created'
     $script:mainWindow = [ClashBarPopupSmoke]::FindWindows($app.Id, 'ClashBar')[0]
+    Write-NativeDiagnostics 'Main native window created'
 
     # Check a stable hidden startup, not merely a hidden window during creation.
     for ($sample = 0; $sample -lt 10; $sample++) {
@@ -216,6 +297,11 @@ try {
     Assert-AppRunning
     Save-PopupScreenshot
     Write-Host 'PASS: native hidden startup, frameless tray window, 360-point sizing, work-area placement, close-to-hide, and single-instance reopen.'
+}
+catch {
+    Write-NativeDiagnostics "Smoke failure: $_" -AllProcesses
+    Write-AppLogs
+    throw
 }
 finally {
     # Only terminate processes started by this smoke, including their WebView2 children.

@@ -223,7 +223,9 @@ mod desktop {
     }
 
     fn show(app: &AppHandle) {
-        let _ = popup::show(app);
+        if let Err(error) = popup::request_show(app) {
+            eprintln!("Cannot show ClashBar popup: {error}");
+        }
     }
 
     #[tauri::command]
@@ -313,6 +315,11 @@ mod desktop {
                         _ => {}
                     });
                 tray.build(app)?;
+                // WebView2 pumps Win32 messages before Tauri registers each window.
+                // A second launch during that interval must wait for this setup.
+                if let Err(error) = popup::mark_ready(app.handle()) {
+                    eprintln!("Cannot show pending ClashBar popup: {error}");
+                }
                 let monitor_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let mut last_running = false;

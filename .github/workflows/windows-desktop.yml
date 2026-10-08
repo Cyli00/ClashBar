@@ -67,6 +67,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+          cache-on-failure: true
       - run: npm ci
       - run: npm run build
       - name: Rust format
@@ -84,12 +85,12 @@ jobs:
       - name: Native packaged popup smoke on disposable runner
         shell: pwsh
         run: ./tests/windows-popup-smoke.ps1
-      - name: Native popup rendering evidence
+      - name: Native popup rendering and failure diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: native-popup-evidence
-          path: desktop/test-results/native-popup.png
+          path: desktop/test-results/native-popup*
           if-no-files-found: ignore
           retention-days: 7
       - uses: actions/upload-artifact@v4

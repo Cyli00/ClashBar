@@ -1,4 +1,30 @@
 //! Event ordering for the tray shell, independent of native window APIs.
+/// A native HWND exists before WebView2 creation finishes and Tauri registers it.
+/// Windows pumps messages during that creation, including a second-instance request.
+#[derive(Debug, Default)]
+pub struct ActivationState {
+    ready: bool,
+    pending: bool,
+}
+
+impl ActivationState {
+    /// Returns whether the caller may display the fully initialized popup now.
+    pub fn request(&mut self) -> bool {
+        if self.ready {
+            true
+        } else {
+            self.pending = true;
+            false
+        }
+    }
+
+    /// Consume early requests once both webviews and the tray have been configured.
+    pub fn mark_ready(&mut self) -> bool {
+        self.ready = true;
+        std::mem::take(&mut self.pending)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct PopupStateMachine {
     pub visible: bool,
@@ -105,6 +131,21 @@ impl PopupStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn early_activation_waits_for_webviews_and_coalesces_requests() {
+        let mut activation = ActivationState::default();
+        assert!(!activation.request());
+        assert!(!activation.request());
+        assert!(activation.mark_ready());
+        assert!(!activation.mark_ready());
+        assert!(activation.request());
+    }
+    #[test]
+    fn normal_startup_stays_hidden_until_an_activation_request() {
+        let mut activation = ActivationState::default();
+        assert!(!activation.mark_ready());
+        assert!(activation.request());
+    }
     #[test]
     fn blur_before_tray_click_cannot_reopen_the_visible_popup() {
         let mut state = PopupStateMachine::default();
