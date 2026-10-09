@@ -1,28 +1,44 @@
-# Validation and release checks
+# 验证与发布检查
 
-The GitHub Actions `Windows Desktop` workflow has separate frontend and Windows gates:
+验证应区分浏览器模拟、Rust服务测试、真实内核和Windows系统集成。任一层通过都不能代替其它层。
 
-- Node unit tests, TypeScript/production build and Playwright interaction tests on an Ubuntu runner.
-- Rust formatting, domain/process tests and Windows-target Clippy.
-- A WinINet integration test in the disposable runner account: save real current-user settings, enable twice, restore, and compare with the original. It is deliberately ignored by normal `cargo test` and requires both an explicit test filter and `CLASHBAR_PROXY_INTEGRATION_TEST=1`.
-- NSIS installer build and artifact upload.
-- A native popup smoke launches the built executable in the disposable Windows runner: hidden startup, no title/resize frame, no taskbar/Alt-Tab window, 360 logical pixel sizing, work-area bounds, second-instance activation and close-to-hide. This does not simulate tray clicks or replace a multi-monitor manual check.
+## 自动检查
 
-Browser tests mock the Tauri IPC boundary. They test frontend behavior, not WebView2, the actual Windows proxy APIs or end-to-end network tunneling. Rust process tests use a controlled fake core to exercise the lifecycle. They do not establish compatibility with every mihomo subscription.
+在 `desktop/` 中执行：
 
-## Windows interactive release check
+```bash
+npm test
+npm run build
+npm run test:e2e
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+npm run tauri build -- --bundles nsis
+```
 
-Before publishing a signed stable release, use a disposable Windows account or VM with a trusted mihomo executable and a valid test profile:
+- Node和Playwright验证五标签、菜单、订阅、远程目标、语言、主题、键盘与恢复反馈。IPC是模拟的，不能证明WebView2或系统代理已工作。
+- Rust单元与测试内核验证配置、订阅、进程、权限流程、日志、Provider、图标、WebSocket和网络恢复策略。
+- `src-tauri/tests/real_core.rs` 使用官方mihomo进行本地HTTP代理转发、流量/内存监控、重启持久设置和停止后端口释放验证。CI固定内核版本并校验下载SHA；不访问生产代理或真实订阅。
+- Windows Desktop工作流构建NSIS并运行原生popup smoke：隐藏启动、360逻辑像素、无普通窗口边框/任务栏项、工作区边界、第二实例唤起及关闭后隐藏。
+- WinINet集成测试仅在可丢弃Windows账户运行；它保存、应用、恢复真实当前用户代理并比较原值。普通 `cargo test` 忽略该测试，需显式测试过滤及 `CLASHBAR_PROXY_INTEGRATION_TEST=1`。
 
-1. Install the NSIS artifact, start the app, open it from the notification-area icon and select the core. Import YAML with a provider/group name containing Chinese, spaces and `/`. Verify mode selection, node selection and latency result.
-2. Confirm an invalid profile or occupied port reports a failure without leaving a child process or changing system proxy settings.
-3. Start and stop repeatedly. Enable proxy, close the window, reopen from tray, then quit. Confirm the previous Windows manual/PAC/auto-detect settings and that the owned core has stopped.
-4. Enable proxy, change the OS proxy using another client, then stop ClashBar. Confirm the newer settings remain and subsequent enable/disable restores that newer baseline.
-5. Kill only the mihomo child. Confirm running state changes and proxy recovery occurs. Force-terminate ClashBar, relaunch it and confirm journal recovery.
-6. Verify a real HTTP/HTTPS request uses the selected node; inspect and close that connection. Verify provider update and rule filtering with the test profile.
-7. Check left-click open/close, outside click dismissal, pinned state, Escape, native file pickers, and focus moving between the main popup and its separate submenu. Menus should open on hover, support keyboard selection, and close after leaving their trigger/menu bridge. Test the Windows tray overflow as well as the visible taskbar.
-8. Test monitors at 100%, 150% and 200% DPI, with different monitor origins and taskbar edges. Resize by switching tabs or collapsing providers; the popup and side menu must remain inside the selected work area. Check dark/light appearance and real WebView2 rendering.
-9. Import two profiles, switch while running with system proxy enabled, and try a candidate that passes YAML parsing but fails mihomo validation or startup. Confirm the prior core remains or is restored, the prior profile remains selected on relaunch, and subscription credentials never enter the displayed errors.
-10. Compare populated light/dark node panels, group menus, rules, connections, logs and settings against the original screenshots and source listed in `PARITY.md`. Do not equate installer compilation or mocked browser screenshots with complete feature parity.
+文档站在 `docs/` 中使用 `pnpm types:check` 和 `pnpm build` 检查。文档更新不得把旧macOS截图或包体数据当作新端验证。
 
-Never run the opt-in proxy integration test in a user's normal account with other proxy clients active.
+## Windows原生验收
+
+使用可丢弃账户/虚拟机、可信mihomo和临时配置；真实Wi-Fi部分需要无线硬件。
+
+1. **安装与启动**：安装NSIS，托盘开合，选择内核，导入含中文、空格、斜杠名称的配置，验证模式、节点、延迟和WebUI。
+2. **失败恢复**：无效YAML、内核校验失败、启动后未就绪和端口冲突均显示失败；不存在遗留自有进程或误改代理。
+3. **代理回合**：带原手动代理/PAC/自动检测设置启动，启用两次再停用/退出，核对完全恢复。其它客户端中途接管时，其新设置保持。
+4. **崩溃**：结束mihomo后检查状态与代理恢复；强制终止ClashBar后重新启动，核对Job Object和快照恢复。
+5. **真实流量**：通过选中节点访问临时测试目标，观察流量和连接，关闭该连接；验证Provider刷新与规则筛选。
+6. **配置/订阅**：运行中切换两份配置；候选校验或启动失败时恢复原配置。检查单项/批量更新、失败后继续、自动周期、原始链接复制和删除归档。外部新增、改写、删除源配置后核对列表与活动指针。
+7. **TUN**：授权、取消授权、首次/后续开启、切换协议栈、关闭、父进程异常退出；核对实际TUN流量、驱动状态和自有提权子进程清理。远程TUN不触发本机UAC。
+8. **Wi-Fi和断网**：拒绝/允许定位权限、绑定两个SSID、切换无线网络、断开/恢复有线网络。仅原本运行的本机内核自动恢复；用户手动停止或改配置后不恢复旧意图。
+9. **远程隔离**：切换HTTP/HTTPS、IPv4/IPv6目标；编辑保留/清除密钥；远程模式日志不混入本机Mihomo，客户端操作日志仍可见；控制目标变更不停止本机内核。
+10. **窗口**：托盘可见区/溢出区、第二次点击、外部点击、固定、Esc、文件选择框、主面板与侧边菜单焦点和键盘选择。
+11. **显示与语言**：100%/150%/200% DPI，不同显示器坐标原点与任务栏位置；五标签、提供者折叠、长内容、浅色/深色、中文/English。面板与侧菜单不越工作区，动态数据不遮挡操作。
+12. **偏好与维护**：分别验证登录启动和内核自启；5类端口、绕过列表、缓存清理、Geo、内核升级、客户端发布检查、日志持久化/清空、LAN/远程终端命令。
+
+稳定发布前记录实际版本、平台和每项结果。未执行的UAC、系统代理回合、无线切换或多显示器检查保留为未验证，不能由编译和模拟测试推断通过。

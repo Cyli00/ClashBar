@@ -63,13 +63,13 @@ export default function Layout({ children }: LayoutProps<'/'>) {
 
           <div className="flex items-center gap-2">
             <a
-              href="https://github.com/Sitoi/ClashBar"
+              href="https://github.com/Cyli00/ClashBar"
               className="hidden items-center rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/20 hover:text-white sm:inline-flex"
             >
               GitHub
             </a>
             <a
-              href="https://github.com/Sitoi/ClashBar/releases"
+              href="https://github.com/Cyli00/ClashBar/releases"
               className="inline-flex items-center gap-2 rounded-lg bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-950 shadow-[0_0_20px_rgba(125,211,252,0.15)] transition hover:bg-sky-50"
             >
               <span className="size-1.5 rounded-full bg-emerald-500" />

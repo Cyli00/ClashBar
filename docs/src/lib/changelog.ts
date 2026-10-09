@@ -1,4 +1,5 @@
-import { gitConfig } from '@/lib/shared';
+// 当前 CHANGELOG 保存的是上游历史；旧版本和 Issue 不能改指向新客户端仓库。
+const historicalRepository = 'Sitoi/ClashBar';
 
 export type ChangelogCategory = 'feature' | 'improve' | 'fix';
 
@@ -49,15 +50,15 @@ export const CHANGELOG_CATEGORIES: ChangelogCategory[] = [
 
 export function githubReleaseUrl(version: string): string {
   const tag = version.startsWith('v') ? version : `v${version}`;
-  return `https://github.com/${gitConfig.user}/${gitConfig.repo}/releases/tag/${tag}`;
+  return `https://github.com/${historicalRepository}/releases/tag/${tag}`;
 }
 
 export function githubReleasesUrl(): string {
-  return `https://github.com/${gitConfig.user}/${gitConfig.repo}/releases`;
+  return `https://github.com/${historicalRepository}/releases`;
 }
 
 export function githubIssueUrl(issue: number): string {
-  return `https://github.com/${gitConfig.user}/${gitConfig.repo}/issues/${issue}`;
+  return `https://github.com/${historicalRepository}/issues/${issue}`;
 }
 
 /** Count items in a release that match the active category filter. */

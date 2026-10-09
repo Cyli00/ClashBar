@@ -1,130 +1,42 @@
 ---
 title: 快速开始
-description: 安装 ClashBar、准备内核、导入配置并完成第一次连接。
+description: 在 Windows 安装 ClashBar、选择内核、导入配置并连接。
 ---
 
-本页带你完成最小可用配置。建议同一时间只让一个 mihomo / Clash 系客户端接管系统代理，避免端口、系统代理或后台辅助进程相互覆盖。
-
-## 系统要求
-
-- macOS Ventura（13.0）及以上
+本仓库维护 Rust + Tauri 2 客户端，当前安装目标是 Windows 10/11 x64。旧 macOS 的 DMG、Homebrew 和 helper 安装步骤不适用于此版本。
 
 ## 1. 安装 ClashBar
 
-### Homebrew（推荐）
+从 [本仓库 Releases](https://github.com/Cyli00/ClashBar/releases) 或 GitHub Actions 的 Windows Desktop 产物中获取 Windows NSIS 安装器。安装前核对来源；当前构建未代码签名。应用使用 WebView2 Runtime。
 
-```sh
-brew tap Sitoi/tap
-brew install --cask clashbar
-```
-
-### 手动安装
-
-从 [GitHub Releases](https://github.com/Sitoi/ClashBar/releases/latest) 下载最新 `.dmg`，挂载后将 `ClashBar.app` 拖入 `/Applications`。
-
-首次打开时，macOS 可能要求确认应用来源；若被 Gatekeeper 拦截，请在 **系统设置 → 隐私与安全性** 中选择「仍要打开」。
-
-### 卸载
-
-```sh
-brew uninstall --cask clashbar
-
-# 同时清除 cask 相关数据（若通过 Homebrew 安装）
-brew uninstall --zap --cask clashbar
-```
-
-手动安装时可直接将 `ClashBar.app` 移入废纸篓；运行时数据目录见下文与 [配置与订阅](/docs/configuration)。
-
-## 安装与使用前注意事项
-
-这些不是可选项，很多时候决定能不能正常用：
-
-1. **同一时间只保留一个** mihomo / Clash 系客户端接管系统代理。请先退出 ClashX、Clash Verge、Clash Nyanpasu、Clash Party、FlClash 等同类软件。
-2. 系统代理依赖打包后的 `.app`。优先使用 Release 的 `.app` / `.dmg`，并把应用放到 `/Applications` 后再打开。
-3. 第一次开启系统代理时，macOS 会要求管理员密码，把特权 helper 装到系统目录。装好之后，更新 app 不会再让它失效。只有 helper 本身升级时才会再要一次密码。
-4. 开机启动仍可能要求在 **系统设置 → 通用 → 登录项** 允许 ClashBar。这和系统代理 helper 不是一回事。
-5. 切换配置、替换内核、批量更新订阅后若行为异常，先执行一次 **重启内核**，把运行态清干净再继续排查。
+启动后点击系统托盘中的 ClashBar 图标。主面板宽 360 逻辑像素，不显示常驻任务栏窗口。再次点击图标或按 Esc 收起；顶部固定按钮让面板在点击外部后仍保持显示。
 
 ## 2. 准备 Mihomo 内核
 
-运行时统一使用：
+含内核安装包会自动准备 mihomo，并保留已有的内核选择。使用无内核安装包时，从 [MetaCubeX/mihomo Releases](https://github.com/MetaCubeX/mihomo/releases) 获取 Windows x64 内核，解压到固定目录，然后在 ClashBar「设置」中选择 `mihomo.exe`。
 
-`~/Library/Application Support/clashbar/core/mihomo`
-
-文件名必须为 `mihomo`，并具有可执行权限。仅从可信来源获取与芯片架构匹配的二进制。
-
-### 路径 A：含 Core 的构建（常见 Release）
-
-部分 Release / 打包会**内置** mihomo。首次启动时，应用可能将内置内核复制到上述 `core/` 目录，之后始终从该路径运行，避免改写已签名的 app bundle。
-
-若日志或状态已显示内核可用，可跳过手动放置。
-
-### 路径 B：无 Core 的构建
-
-部分体积更小的构建**不内置** mihomo。此时需自行准备可执行文件：
-
-1. 在 ClashBar 中停止内核（若已在运行）。
-2. 将 `mihomo` 放到 `~/Library/Application Support/clashbar/core/mihomo`。
-3. 在设置中使用「打开内核目录」核对路径，再启动或重启内核。
-
-更换自定义内核的步骤、缓存清理与 TUN 授权说明见下文「切换内核」。
+应用会执行你选中的程序进行配置验证和启动。更换内核前先停止本机内核，再选择新文件。
 
 ## 3. 导入配置
 
-点击菜单栏图标打开面板：
+在「节点」页打开配置菜单，选择本地 YAML 或导入 HTTP(S) 订阅。默认配置用于初始设置，不包含你的订阅节点。
 
-1. 首次可先用**默认配置**启动一次，让 Mihomo 准备 GEO 等资源（需要网络可达）。
-2. 选择「导入本地配置」或「导入订阅链接」。
-3. 在「切换配置」中选中目标配置。
-4. 如需示例 YAML，可在配置目录中查看并按自己的订阅修改。
+订阅可以指定名称、开启自动更新并设置小时数。默认 6 小时、最小 1 小时。配置保存、刷新和删除行为见 [配置与订阅](/docs/configuration)。
 
-配置发现规则与订阅维护见 [配置与订阅](/docs/configuration)。
+## 4. 启动并验证
 
-## 4. 启动并验证（快速上手）
+1. 选择配置并点击启动；应用先执行 `mihomo -t`。
+2. 控制器就绪后选择规则 / 全局 / 直连。
+3. 在代理组中选择节点，执行延迟测试。
+4. 开启系统代理；需要透明代理时再开启 TUN。
+5. 用「连接」「日志」确认请求和错误。
 
-1. 打开菜单栏面板。
-2. 在「节点」页选择配置，或完成导入。
-3. 点击 **启动内核**；刚改过配置或内核时优先 **重启内核**。
-4. 选择模式：**规则 / 全局 / 直连**。
-5. 在代理组中切换节点并做**延迟测试**，确认线路可用。
-6. 验证连通性后再开启**系统代理**。第一次会要求管理员密码安装 helper。
-
-可用「连接」「日志」交叉确认请求是否出现。不再需要代理时，先关系统代理再停内核。
+本机 TUN 需要 Windows UAC 授权；系统代理修改当前用户 WinINet 设置。两种接管方式的边界见 [系统代理与 TUN](/docs/network-mode)。
 
 ## 切换内核
 
-1. 在 ClashBar 中 **停止** 内核，确保进程已退出。
-2. 准备目标可执行文件，命名为 `mihomo`，覆盖  
-   `~/Library/Application Support/clashbar/core/mihomo`。
-3. 返回应用，执行 **启动** 或 **重启**。
+停止内核后在设置中选择新文件。源配置和保存的偏好继续保留；新内核仍须通过配置验证及控制器就绪检查。切换后遇到缓存或 Geo 资源错误，可打开内核/配置目录并结合日志定位，避免删除整个数据目录。
 
-若切换后出现缓存兼容问题，可清理后重试：
+## 退出与卸载
 
-```bash
-rm -f "$HOME/Library/Application Support/clashbar/cache.db"
-```
-
-使用 TUN 时，切换内核后可能需要重新完成管理员授权（root + setuid）。详见 [系统代理与 TUN](/docs/network-mode)。
-
-## 常用快捷键（可选）
-
-应用在前台时：
-
-- <kbd>⌘S</kbd> 系统代理 · <kbd>⌘E</kbd> TUN  
-- <kbd>⌃⌘1</kbd>…<kbd>⌃⌘3</kbd> 运行模式 Rule / Global / Direct  
-- <kbd>⌘⇧R</kbd> 启动/重启内核 · <kbd>⌘⇧.</kbd> 停止内核  
-- <kbd>⌘⌥1</kbd>…<kbd>⌘⌥5</kbd> 切换面板标签  
-
-完整列表与限制见 [日常使用 · 键盘快捷键](/docs/daily-use#键盘快捷键)。
-
-## 下一步
-
-按文档结构继续：
-
-1. [功能总览](/docs/features) — 看全量能力对照
-2. [配置与订阅](/docs/configuration) — 数据目录、导入与刷新
-3. [日常使用](/docs/daily-use) — 节点 / 分流 / 连接 / 日志与快捷键
-4. [系统代理与 TUN](/docs/network-mode) — 正式接管系统流量
-5. [设置与维护](/docs/settings) — 自启、端口、缓存与 Geo
-
-进阶场景见 [SSID 策略](/docs/ssid-strategy)、[远程机器](/docs/remote-machine)；排障见 [常见问题](/docs/troubleshooting)。
+退出 ClashBar 会恢复仍由它管理的系统代理设置，并停止自己的内核进程。卸载前先正常退出，再通过 Windows「已安装的应用」卸载。配置和订阅可能包含凭据，备份与清理请按 [配置与订阅](/docs/configuration) 中的数据目录说明进行。

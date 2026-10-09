@@ -1,60 +1,76 @@
-# ClashBar for Windows
+# ClashBar Rust + Tauri 客户端
 
-Rust + Tauri 2 的 Windows 客户端，沿用独立 mihomo 内核。当前为迁移预览版，目标平台为 Windows 10/11 x64。SwiftUI/AppKit 源码保留在仓库中作为 macOS 实现与迁移参照，Windows 构建不依赖 Xcode 或 Swift。
+`desktop/` 是唯一维护的客户端，使用 Rust、Tauri 2、TypeScript 与独立 mihomo 内核。发布目标为 Windows 10/11 x64；macOS/Linux 系统集成与安装包尚未验证。
 
 ## 开发与打包
 
-安装 [Tauri Windows 构建依赖](https://v2.tauri.app/start/prerequisites/#windows)：Rust MSVC 工具链、Visual Studio C++ Build Tools、Windows SDK、WebView2 Runtime，以及 Node.js 22+。
+需要 Node.js 22+、Rust MSVC 工具链、Visual Studio C++ Build Tools、Windows SDK 和 WebView2 Runtime。环境安装见 [Tauri Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows)。
 
-```powershell
+```bash
 cd desktop
 npm ci
 npm run tauri dev
 ```
 
-```powershell
+```bash
 npm test
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
 npm run tauri build -- --bundles nsis
 ```
 
-安装器位于 `src-tauri/target/release/bundle/nsis/`。GitHub Actions 的 `Windows Desktop` 工作流会执行检查、构建并上传安装器；此预览版没有代码签名，未发布自动更新渠道。安装包不包含 mihomo，避免隐式下载或执行未知内核。
+安装器输出到 `src-tauri/target/release/bundle/nsis/`；Windows Desktop 工作流会构建并上传产物。默认构建不含内核；可先运行 `npm run core:bundle -- <可信的 mihomo.exe 或 mihomo.gz 路径>`，再构建含内核安装包。该命令验证 Windows x64 PE、大小和 SHA-256，只准备资源，不下载或执行内核。具体二进制与校验清单不提交 Git。此构建尚未代码签名。
 
 ## 首次使用
 
-1. 从 [MetaCubeX/mihomo 官方 Releases](https://github.com/MetaCubeX/mihomo/releases) 下载适合 Windows x64 的内核，解压至固定目录。
-2. 启动 ClashBar，点击系统托盘中的图标展开面板，在「设置」中选择 `mihomo.exe`。只选择自己信任的内核；选择后应用会在验证和启动时执行它。
-3. 导入本地 YAML 配置或 HTTPS 订阅，按需设置 mixed-port 与控制端口。
-4. 点击启动。ClashBar 会先生成运行配置并执行 `mihomo -t`，API 就绪后才显示运行中。
-5. 选择 Rule / Global / Direct 和节点，确认配置可用后开启系统代理。
-6. 再次点击托盘图标或按 Esc 收起面板；未固定时点击外部也会收起。顶部固定按钮保留面板，退出按钮会恢复代理设置并停止自有内核。
+1. 含内核构建会自动准备应用数据目录中的 `core/mihomo.exe`；已有手选内核路径或托管内核不会被覆盖。无内核构建需从 [MetaCubeX/mihomo Releases](https://github.com/MetaCubeX/mihomo/releases) 获取 Windows x64 内核，解压到固定目录。
+2. 点击系统托盘中的 ClashBar 图标。需要自行选择或替换内核时，在「设置」中选择可信的 `mihomo.exe`；应用随后会执行它进行配置验证和启动。
+3. 导入本地 YAML 或 HTTP(S) 订阅。首次启动会提供默认配置；它不包含你的订阅节点。
+4. 点击启动。应用先执行 `mihomo -t`，确认控制器就绪后显示运行中。
+5. 选择规则 / 全局 / 直连和代理节点，测试延迟，再开启系统代理或 TUN。
+6. 再次点击托盘图标或按 Esc 收起面板；固定后点击外部保持显示。退出时恢复原系统代理并停止本应用启动的内核。
 
-订阅导入是一次性获取，重新导入可更新配置。订阅须为公共地址上的 HTTPS 443 URL，不跟随重定向；需要时填写最终地址。导入的配置保存在配置库中，通过「切换配置」侧边菜单选择。运行中切换会先用 mihomo 验证候选配置，启动成功后才保存新的活动配置；失败时尝试恢复原配置与代理状态。旧预览版的单配置槽会自动迁移。更换内核与端口前仍需停止内核。文件型 Provider 与入站代理认证暂不支持，导入时会明确拒绝。导入文件保留为源配置，应用为运行生成独立副本，原始用户文件不会被修改。
+## 配置与订阅
 
-## Windows 行为与边界
+配置菜单支持导入、切换、重载、删除、单项和批量订阅刷新。订阅可指定文件名，默认每 6 小时自动更新，最小间隔 1 小时；失败同样推进检查时间，避免每分钟重复请求失败地址。链接在 Rust 数据目录中保存，复制时通过后端剪贴板操作，普通状态数据只包含来源主机名。
 
-- 控制器固定在 `127.0.0.1`，使用每次运行生成的 secret；前端不能读取 secret，也没有任意 shell 或通用 HTTP 转发命令。
-- 此版本管理本地显式代理：运行配置覆盖控制器、监听地址和代理端口，关闭 TUN、LAN 暴露及额外入站监听。需要这些能力的配置不代表在此版本中已获支持。
-- 系统代理作用于当前用户默认 WinINet/LAN 配置。它不修改机器级 WinHTTP、命名拨号/VPN 连接，也不能保证所有应用遵守代理设置。
-- 修改系统代理前保存原设置，停用时先检查所有权。其他客户端已接管时不会覆盖它的新设置；旧快照会归档，下次显式启用将以当前设置为基线。
-- 内核异常退出会尝试恢复代理。应用被强制终止或系统崩溃后，Windows Job Object 负责清理自有子进程，代理快照在下次启动时恢复。若仍无法联网，请先重新打开 ClashBar，必要时在 Windows 代理设置中检查手动代理/PAC。
-- 源配置、订阅内容可能含节点凭据，保存在当前用户应用数据目录。程序没有遥测，不上传配置；请勿把整个数据目录或含凭据日志公开到 Issue。
+同名导入会先确认覆盖，保留配置 ID、当前选择和 Wi-Fi 绑定；本地文件覆盖会解除原订阅来源。新增配置保留当前选择，仅没有活动配置时自动选中。可在配置菜单中定位当前配置文件。
 
-## 迁移范围
+下载接受 HTTP/HTTPS、私有网络地址和重定向；最多 10 次重定向、30 秒和 8 MiB。每次更新先校验配置；活动配置切换失败会尝试恢复原内核与代理状态。删除移入 `deleted-profiles/`，不会永久擦除配置。配置目录外部增删改会触发重新核对，活动配置变更通过相同验证与恢复流程处理。
 
-| 能力 | Windows 预览版 |
+文件型 Provider 会从导入配置所在目录复制到专用缓存；相对资源不能越出该目录。源配置保留，运行副本在 `runtime/` 中生成。运行时控制器固定在 loopback 并使用临时密钥；代理端口、TUN、LAN、IPv6、TCP 并发与日志级别按应用已保存的设置覆盖。
+
+## 主要功能
+
+| 功能 | 当前行为 |
 | --- | --- |
-| 本地内核、YAML/HTTPS 导入、配置验证 | 已实现 |
-| 模式、代理组选择、节点测速、Provider 更新 | 已实现 |
-| 规则与连接查看、单连接/全部连接关闭 | 已实现 |
-| 内核输出日志、托盘、系统代理恢复 | 已实现 |
-| 多配置归档、运行中切换与失败恢复 | 已实现 |
-| 订阅定时更新、远程机器 | 尚未迁移 |
-| TUN、管理员服务、Wi-Fi/SSID 策略 | 尚未迁移 |
-| 开机启动、内核/客户端自动更新 | 尚未迁移 |
-| 流量与内存 | 累计流量差值采样曲线、内核内存；未采用原版 WebSocket 流 |
-| 中英切换 | 尚未迁移 |
-| Rust 客户端在 macOS/Linux 的发布支持 | 尚未验证；系统代理明确仅支持 Windows |
+| 紧凑面板 | 360 逻辑像素，固定头尾，5 个标签，独立侧边菜单，深浅色与中英语言 |
+| 内核与启动 | 选择、验证、启动、停止、重启；登录启动和内核自启分别设置 |
+| 代理与规则 | 模式、节点选择、单组/全部测速、历史、Provider 刷新、规则搜索与分组 |
+| 后台 Provider | 启动、重启、配置切换后刷新代理/规则提供者；单项失败后继续 |
+| 监控 | traffic、memory、connections WebSocket，断流重连；HTTP 快照兼容回退 |
+| 日志 | 时间戳和来源、过滤、复制、清空；应用动作日志每 10 MiB 轮换，保留 5 个备份 |
+| 组图标 | Rust 下载、2 MiB 上限、7 天磁盘缓存，前端仅接收 data URI |
+| 系统代理 | 当前用户 WinINet 代理、绕过列表；原设置快照、所有权检查、退出恢复 |
+| TUN | Windows UAC 提权助手启动内核；system/gvisor/mixed/mips 协议栈，mips 需要 mihomo 1.19.31+ |
+| Wi-Fi | 原生 WLAN 查询、权限状态、SSID 绑定和自动切换本机配置 |
+| 断网恢复 | 原生网卡状态检测；断网暂停原本运行的本机内核，恢复后重启；手动停止或改选配置取消恢复 |
+| 远程机器 | HTTP(S)、IPv4/IPv6、增删改、探测、目标切换；远程状态与本机进程隔离 |
+| 维护 | DNS/FakeIP 清理、Geo 更新、内核升级、客户端版本检查与发布页 |
+| 端口与命令 | HTTP/SOCKS/混合/重定向/TProxy 编辑；本地、LAN、当前远程端点 PowerShell 代理命令 |
 
-面板的视觉、交互与已知差异见 [原版对照表](PARITY.md)。选型与后续工作见 [架构决策](ARCHITECTURE.md)。原版 macOS 说明见 [README.macos.md](../README.macos.md)。
+客户端更新沿用原版的「检查版本并打开发布页」，不自动安装。发布页指向 [Cyli00/ClashBar](https://github.com/Cyli00/ClashBar/releases)。
+
+## Windows 行为
+
+系统代理修改当前用户 WinINet/LAN 设置，不修改机器级 WinHTTP 或每个应用自己的代理。其它客户端接管后，ClashBar 不覆盖其新设置。崩溃恢复依靠代理快照和 Windows Job Object；强制结束后可重新打开应用恢复快照。
+
+TUN 使用 UAC 提权助手，不安装 macOS helper、不设置 setuid。拒绝授权会返回失败；只有控制器实际返回请求状态后才显示启用。重定向和 TProxy 的可用性由所选内核与运行平台决定，填写端口不表示 Windows 内核支持相应透明代理协议。
+
+选择远程机器不停止本机内核。远程控制写入所选控制器；系统代理开关仍修改这台 Windows 机器，可指向远程代理端口。本机文件管理与进程启停在远程目标下受限。密钥不回传 WebView。
+
+数据位于 Tauri 当前用户应用数据目录（标识 `io.github.cyli00.clashbar`），包含 `settings.json`、`profiles/`、`runtime/`、`logs/`、`icons/` 与 `deleted-profiles/`。配置与保存的订阅可能含凭据，分享排障材料前请脱敏。
+
+## 验证边界
+
+[PARITY.md](PARITY.md) 记录原版功能映射；[VALIDATION.md](VALIDATION.md) 记录原生验收步骤。Rust 本地测试验证控制器、WebSocket、配置、日志、进程与恢复策略；浏览器测试使用模拟 IPC。它们不代替真实 Windows UAC、无线切换、系统代理流量、混合 DPI 和多显示器交互验收。

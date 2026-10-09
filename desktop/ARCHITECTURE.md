@@ -1,42 +1,45 @@
-# Windows migration decision
+# Rust + Tauri 客户端架构
 
-## Decision
+## 决策
 
-Use Rust + Tauri 2 for the new Windows desktop client, with a small TypeScript view layer and the existing upstream mihomo executable as the proxy engine. Do not translate the proxy engine to Rust. Retain the Swift/macOS implementation during migration so feature behavior and upstream fixes remain inspectable.
+客户端只维护 `desktop/` 的 Rust + Tauri 2 实现，TypeScript 负责视图。mihomo 仍是独立的代理内核，不翻译成 Rust。旧 SwiftUI/AppKit 客户端、XPC/launchd helper 与 Xcode 构建链退出维护；历史行为可以从 Git 历史核对。
 
-The current product is a tray utility for configuration, proxy selection, rules, connections and system proxy management. Its HTTP controller boundary is reusable; AppKit, SwiftUI, XPC, launchd and the privileged macOS helper are not portable.
+这一选型保留控制器协议和产品行为，重写与操作系统绑定的窗口、托盘、权限、Wi-Fi 和系统代理集成。C# / WinUI 能提供 Windows 原生控件；Qt 也支持跨平台桌面，但都不能复用本项目旧 Swift 界面。Tauri 使用现有 Web 前端工具链与 Rust 服务边界；这不意味着安装包大小和内存与旧版 macOS 应用相同。
 
-| Option | Fit for this fork |
+## 领域边界
+
+- **控制目标**是本机自有内核或已保存的远程机器。切换目标只改变控制请求目的地，不停止后台本机内核。
+- **源配置**是配置库中保存的 YAML；**运行配置**是由源配置与保存设置生成的独立副本。临时控制器密钥不写回源配置。
+- **订阅**将配置标识与远程来源、检查时间、更新周期关联；**Provider** 是 mihomo 配置内的代理/规则资源，两者有不同刷新入口。
+- **系统代理**是 Windows 当前用户的代理设置；远程控制目标也可以成为这台机器的代理出口。
+- **TUN**属于内核运行能力；本机权限由 UAC 提权助手处理，远程权限由远端管理者负责。
+
+## 实现分工
+
+| 模块 | 责任 |
 | --- | --- |
-| Rust + Tauri 2 | Shared UI and domain layer with isolated Windows integration; typed IPC, WebView2, tray and installer support. Chosen for future cross-platform evolution. |
-| C# + WinUI 3 / WPF | Strong alternative for a permanently Windows-only product and an experienced .NET team. Would still require rewriting the Swift UI and services. |
-| C++ + Qt | Viable cross-platform native toolkit, but this repository has no reusable C++ implementation to offset its integration and maintenance cost. |
+| `src/main.ts`、`menu.ts`、`ui.ts`、`i18n.ts` | 五标签面板、附属菜单、交互状态、语言和无障碍 |
+| `src-tauri/src/lib.rs` | 显式业务 IPC、后台周期、窗口/托盘与平台插件接线 |
+| `engine.rs`、`engine/` | 配置与目标生命周期、订阅和目录监测、本机设置、后台任务 |
+| `controller.rs`、`streams.rs` | 受认证的控制器 HTTP/WebSocket、重连与有界遥测 |
+| `process.rs`、`process/elevated.rs` | 自有进程、Job Object、UAC 助手与父进程生命周期 |
+| `system_proxy.rs` | WinINet 快照、所有权检查、恢复和绕过列表 |
+| `ssid.rs`、`network.rs` | 当前 Wi-Fi 与物理网络接口状态，不主动探测公网 |
+| `app_logs.rs`、`providers.rs`、`group_icons.rs` | 日志轮换、后台 Provider 刷新和组图标缓存 |
+| `subscriptions.rs`、`subscription.rs`、`releases.rs` | 订阅元数据/下载、客户端发布检查 |
 
-This is a project-specific tradeoff, not a performance benchmark or a claim that Tauri preserves the original macOS application's package size or memory usage. Windows requires WebView2.
+WebView 仅加载打包资源，IPC 不提供任意 shell、文件系统或通用 HTTP 客户端。控制器密钥和订阅原始链接留在 Rust；远程返回的名称、规则和日志按文本显示。组图标由 Rust 校验后转换为 data URI，SVG 不接受脚本与外部资源。
 
-## Boundaries
+## 状态与恢复
 
-- TypeScript owns presentation and interaction state. Rust owns filesystem access, secrets, configuration derivation, network calls, process lifecycle and proxy changes.
-- IPC exposes named business operations; it does not expose a generic HTTP client, filesystem API or shell command to the WebView.
-- The web surface contains only bundled assets, with restrictive CSP and no remote content execution. Untrusted node names, rules, logs and errors are rendered as text.
-- A managed local controller uses loopback and an ephemeral secret. Control requests bypass system proxies and do not follow redirects. Subscription transport is separate and bounded.
-- All lifecycle/proxy mutations are serialized. Readiness, validation and controller failures remain visible; a spawned process alone is not proof the client is connected.
-- User proxy settings are a reversible transaction: durable snapshot, apply, ownership check, restore. An unrelated proxy owner must not be overwritten.
-- The client owns only its child process, never all processes named mihomo. Windows Job Object lifetime binds cleanup to the application where supported.
+源配置使用内容标识存储，设置通过原子写入提交。运行中切换先验证候选，启动成功后保存活动指针；失败时尝试恢复原进程及代理。删除配置会归档；磁盘目录变更也走验证流程。
 
-## Incremental migration
+系统代理是一笔可恢复的修改：保存原值、应用新值、检查所有权、恢复原值。用户或其它软件已改写代理时，不把旧快照强行覆盖回去。应用仅管理自己启动的进程。
 
-The initial PR covers the usable local proxy loop and installs a Windows build pipeline. Follow-up work should be individually reviewable: remote-machine parity; streaming metrics/logs; a separately designed privileged Windows TUN service; SSID policy; startup/update lifecycle; localization; macOS/Linux platform adapters.
+监控按目标拥有任务，目标切换或停止时取消。遥测超过 5 秒视为过期，快照使用 HTTP 回退。网络断开只暂停原本运行的本机内核；用户手动停止、改选配置或切换目标会取消自动恢复意图。
 
-The tray popup follows the original SwiftUI layout tokens: 360 logical pixels wide, 8-pixel inner margins, compact monospaced controls and a fixed header/footer. The main window starts hidden, has no decorations or taskbar entry, and anchors to the tray monitor's work area. A separate owned WebView displays adjacent menus rather than expanding the main window into an invisible click-catching surface. Popup pinning, focus transitions, native file pickers and tray clicks share one native state owner.
+## 视觉与平台
 
-Profiles use content-addressed source files and one atomic settings pointer. Importing retains prior profiles. A live switch validates the candidate with the selected core before stopping the working one; startup and proxy restoration precede committing the new pointer. Failed activation attempts restore the previous managed process. An invalid legacy profile does not prevent opening the UI to re-import.
+面板保留原版 360 逻辑像素宽、8 像素内边距、紧凑控件和固定头尾；侧边菜单是独立 WebView。定位、固定、失焦、文件选择框和托盘点击由统一窗口状态处理。Windows 的通知区域尺寸、WebView2 字体度量与材质效果无法逐像素等同 AppKit。
 
-Do not remove the Swift implementation until replacement functionality and platform tests establish parity. See [README](README.md) for the explicit current support matrix and limitations.
-
-## References
-
-- Existing domain contracts: `Sources/ClashBar/Services/MihomoAPIService.swift`, `CoreService.swift`, `SystemProxyService.swift`.
-- [Tauri architecture](https://v2.tauri.app/concept/architecture/), [system tray](https://v2.tauri.app/learn/system-tray/), [capabilities](https://v2.tauri.app/security/capabilities/).
-- [Windows internet options](https://learn.microsoft.com/en-us/windows/win32/wininet/setting-and-retrieving-internet-options), [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
-- [Microsoft WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui/), [Qt system tray](https://doc.qt.io/qt-6/qsystemtrayicon.html).
+目前发布和系统集成面向 Windows。通用 Rust 单元测试能在其它系统编译不代表 macOS/Linux 发布支持；原生验收范围见 [VALIDATION.md](VALIDATION.md)。

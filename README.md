@@ -3,42 +3,46 @@
 
 # ClashBar
 
-**Windows 客户端迁移预览 · Rust + Tauri 2 · mihomo**
+**Rust + Tauri 2 托盘客户端 · mihomo**
 
-[Windows 开发与使用](desktop/README.md) · [架构选型](desktop/ARCHITECTURE.md) · [原版 macOS 说明](README.macos.md)
+[开发与使用](desktop/README.md) · [架构](desktop/ARCHITECTURE.md) · [迁移对照](desktop/PARITY.md) · [验证](desktop/VALIDATION.md)
 </div>
 
-此 fork 在 `desktop/` 中实现 Windows 托盘代理客户端，将界面与客户端服务迁移到 TypeScript + Rust，继续使用独立的 [mihomo](https://github.com/MetaCubeX/mihomo) 内核。
+本仓库只维护 `desktop/` 中的 Rust + Tauri 客户端。SwiftUI、AppKit、Swift Package、macOS Helper 和原 DMG 构建流程已移除。原实现保留在 Git 历史 `62e81b1` 中，作为功能和设计的核对依据。
 
-界面沿原版 SwiftUI 的 360px 菜单面板复刻：点击 Windows 托盘图标展开或收起，固定面板后保持显示，节点与配置使用独立的侧边菜单；没有常驻大窗口或任务栏入口。支持多配置导入与切换、内核验证/启动/停止/重启、模式与节点切换、测速、Provider 更新、规则、连接与日志，以及 Windows 当前用户系统代理管理。退出时恢复原代理设置。
+界面沿用原版 360px 菜单面板：托盘开关、固定面板、独立侧边菜单，以及节点、分流、连接、日志、设置五个标签。Rust 负责内核生命周期、配置与订阅、远程控制器、系统代理、TUN 权限、SSID 策略和实时监控；TypeScript 负责界面及中英切换。代理引擎继续使用独立的 [mihomo](https://github.com/MetaCubeX/mihomo)。
 
-**这是分阶段迁移，尚未达到原 macOS 版本的功能等价。** TUN/管理员服务、SSID 策略、远程机器、自动更新与中英切换尚未迁移。完整范围、配置覆盖行为与崩溃恢复限制见 [Windows README](desktop/README.md) 与 [原版对照表](desktop/PARITY.md)。现有 SwiftUI/AppKit 源码继续保留，Windows 构建不依赖它。
+当前安装目标为 Windows 10/11 x64。macOS/Linux 的 Rust 平台集成与安装包尚未验证，不能将移除旧端理解为已经发布新的 macOS/Linux 客户端。功能对应关系、平台差异和验证范围见[迁移对照](desktop/PARITY.md)。
 
-## 快速开始
+## 开发与构建
 
-环境：Windows 10/11 x64、Node.js 22+、Rust MSVC 工具链、Visual Studio C++ Build Tools 与 WebView2。详见 [Tauri Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows)。
+需要 Node.js 22+、Rust MSVC 工具链、Visual Studio C++ Build Tools、Windows SDK 和 WebView2。
 
-```powershell
+```bash
 cd desktop
 npm ci
 npm run tauri dev
 ```
 
-应用内选择可信的 `mihomo.exe`，导入本地 YAML 或 HTTPS 订阅，启动内核后再开启系统代理。安装包不内置内核。
+在应用中选择可信的 mihomo 可执行文件，导入配置或订阅，再启动内核。TUN 首次启动会请求系统权限。系统代理在退出时恢复原设置，配置和凭据只保存在本机应用数据目录。
 
-```powershell
-npm run tauri build -- --bundles nsis
+```bash
+npm test
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+npm run test:e2e
+npm run tauri build -- --bundles nsis -- --locked
 ```
 
-构建产物位于 `desktop/src-tauri/target/release/bundle/nsis/`，也可在本仓库 GitHub Actions 的 `Windows Desktop` 工作流中获取。预览版安装器未签名。
+安装包位于 `desktop/src-tauri/target/release/bundle/nsis/`。GitHub Actions 执行前端、Rust、安装包及原生弹窗检查。默认构建不包含 mihomo；也可按开发文档准备可信内核，生成随包版本。当前未配置代码签名。
 
 ## 项目结构
 
 | 路径 | 用途 |
 | --- | --- |
-| `desktop/src/` | Windows 客户端界面 |
-| `desktop/src-tauri/` | Rust 服务、进程生命周期、Windows 系统集成 |
-| `Sources/`、`Package.swift` | 原版 macOS 客户端 |
-| `docs/` | 原版文档站 |
+| `desktop/src/` | Tauri 界面、语言、菜单与交互 |
+| `desktop/src-tauri/` | Rust 服务、系统集成、内核进程与资源 |
+| `desktop/tests/` | 前端单元、浏览器与原生弹窗检查 |
+| `docs/` | 文档站及原版界面参考图片 |
 
 感谢 [Sitoi/ClashBar](https://github.com/Sitoi/ClashBar) 原项目和 [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) 内核。保留上游 [LICENSE](LICENSE) 与署名。

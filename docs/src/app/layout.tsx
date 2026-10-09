@@ -10,7 +10,7 @@ export const metadata: Metadata = {
     default: 'ClashBar 文档',
     template: '%s | ClashBar',
   },
-  description: 'ClashBar：面向 macOS 菜单栏的 Mihomo 客户端。',
+  description: 'ClashBar：使用 Rust + Tauri 的 Windows 托盘 Mihomo 客户端。',
   icons: {
     icon: [{ url: '/clashbar-logo.ico', type: 'image/x-icon' }],
     shortcut: '/clashbar-logo.ico',

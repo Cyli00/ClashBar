@@ -1,45 +1,16 @@
-# docs
+# ClashBar 文档站
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
-
-Run development server:
+Next.js + Fumadocs站点，为唯一维护的Rust + Tauri Windows客户端提供使用说明。
 
 ```bash
-npm run dev
-# or
+pnpm install --frozen-lockfile
+pnpm types:check
+pnpm build
 pnpm dev
-# or
-yarn dev
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+内容位于 `content/docs/`，首页在 `src/app/(home)/page.tsx`，共享仓库链接在 `src/lib/shared.ts`。`src/app/global.css` 和页面现有Tailwind类拥有样式。
 
-## Explore
+客户端发布链接指向 `Cyli00/ClashBar`。旧上游版本记录可作为历史保留，但不能用于宣称当前Windows包体、平台兼容或原生验收通过。`public/clashbar-light.png` 和 `clashbar-black.png` 是原版布局参考图，首页明确标注来源性质。
 
-In the project, you can see:
-
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
-
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
-
-### Fumadocs MDX
-
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
-
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
-
-## Learn More
-
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+构建时运行 `scripts/parse-changelog.mjs`，从仓库 `CHANGELOG.md` 生成版本数据。Cloudflare部署仅在明确发布文档站时执行；本地类型检查和构建不会发布。

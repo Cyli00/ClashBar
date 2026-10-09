@@ -15,22 +15,22 @@ import Image from "next/image";
 import Link from "next/link";
 
 const highlights = [
-  { label: "安装包体积", value: "3 MB", hint: "无 Core 构建约数" },
-  { label: "含 Core 体积", value: "≈14 MB", hint: "打包 mihomo 目标 <15 MB" },
+  { label: "面板宽度", value: "360 px", hint: "按系统 DPI 缩放" },
+  { label: "客户端", value: "Rust + Tauri", hint: "独立 mihomo 内核" },
   { label: "代理内核", value: "mihomo", hint: "Meta 生态兼容" },
-  { label: "系统要求", value: "macOS 13+", hint: "Homebrew / DMG 安装" },
+  { label: "系统要求", value: "Windows 10/11", hint: "x64 / WebView2" },
 ];
 
 const pillars = [
   {
     icon: <Zap className="size-5" />,
-    title: "菜单栏即控制台",
-    description: "配置、节点、系统代理与排障视图收进一个紧凑的原生面板，点击菜单栏图标即可完成日常操作。",
+    title: "托盘即控制台",
+    description: "配置、节点、系统代理与排障视图收进一个紧凑面板，点击系统托盘图标即可操作。",
   },
   {
     icon: <Gauge className="size-5" />,
-    title: "轻量常驻",
-    description: "安装包约 3 MB，零第三方依赖，专注低占用与稳定运行，不把菜单栏工具做成重型桌面套件。",
+    title: "紧凑常驻",
+    description: "面板宽 360 逻辑像素，保留固定、侧边菜单、深浅色与中英语言。关闭面板后监控继续运行。",
   },
   {
     icon: <GitBranch className="size-5" />,
@@ -46,7 +46,7 @@ const quickSteps = [
   },
   {
     title: "完成首次启动",
-    body: "首次启动时，先用默认配置启动一次，让 mihomo 完成所需资源准备。",
+    body: "含内核构建会自动准备 mihomo；无内核构建需从可信来源准备 Windows x64 可执行文件，并在设置中选择。",
   },
   {
     title: "导入节点配置",
@@ -62,7 +62,7 @@ const quickSteps = [
   },
   {
     title: "开启系统代理",
-    body: "确认连通性正常后再开启系统代理；若开关无反应，请检查“登录项”中的后台活动。",
+    body: "确认连通性后开启当前用户系统代理；需要 TUN 时按 Windows UAC 提示授权。",
   },
 ];
 
@@ -87,24 +87,24 @@ export default function HomePage() {
             <span className="flex size-5 items-center justify-center rounded-full bg-sky-400/15 text-sky-300">
               <MonitorSmartphone className="size-3" />
             </span>
-            原生 macOS 菜单栏代理客户端
+            Windows 托盘代理客户端
           </p>
 
           <h1 className="text-balance text-[clamp(2.75rem,5.5vw,4.25rem)] font-semibold leading-[1.05] tracking-[-0.045em] text-white">
             轻量、稳定、够用
             <span className="mt-2 block bg-[linear-gradient(120deg,#f8fafc_0%,#7dd3fc_45%,#a5b4fc_100%)] bg-clip-text text-transparent">
-              菜单栏一开就能接管流量
+              从托盘管理代理与连接
             </span>
           </h1>
 
           <p className="mt-6 max-w-lg text-pretty text-base leading-7 text-slate-400 sm:text-lg sm:leading-8">
             ClashBar 基于 mihomo
-            构建，把配置导入、节点切换、系统代理与排障视图收进一个紧凑的原生面板——专注日常使用，而不是堆功能。
+            构建，通过 Rust + Tauri 把配置导入、节点切换、系统代理与排障视图收进一个紧凑面板。
           </p>
 
           <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
             <a
-              href="https://github.com/Sitoi/ClashBar/releases"
+              href="https://github.com/Cyli00/ClashBar/releases"
               className="group inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-white px-7 text-sm font-semibold text-slate-950 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_12px_40px_-8px_rgba(56,189,248,0.45)] transition duration-200 hover:-translate-y-0.5 hover:bg-sky-50"
             >
               <Download className="size-4 transition group-hover:scale-110" />
@@ -112,7 +112,7 @@ export default function HomePage() {
             </a>
             <div className="flex gap-3">
               <a
-                href="https://github.com/Sitoi/ClashBar"
+                href="https://github.com/Cyli00/ClashBar"
                 className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-5 text-sm font-medium text-white transition duration-200 hover:border-white/20 hover:bg-white/[0.07] sm:flex-none sm:px-6"
               >
                 GitHub
@@ -129,7 +129,7 @@ export default function HomePage() {
           </div>
 
           <ul className="mt-8 flex flex-wrap gap-x-5 gap-y-2.5 text-sm text-slate-400">
-            {["SwiftUI + AppKit", "零第三方依赖", "GPL-3.0 开源"].map((item) => (
+            {["Rust + Tauri 2", "Windows x64", "GPL-3.0 开源"].map((item) => (
               <li key={item} className="flex items-center gap-2">
                 <Check className="size-3.5 text-sky-400" strokeWidth={2.5} />
                 {item}
@@ -157,20 +157,21 @@ export default function HomePage() {
           </div>
 
           <div className="absolute bottom-[12%] -right-1 z-20 hidden animate-clashbar-float-delayed rounded-2xl border border-white/10 bg-slate-950/80 px-3.5 py-2.5 shadow-2xl backdrop-blur-xl motion-reduce:animate-none sm:right-0 lg:block">
-            <span className="block text-[10px] font-semibold tracking-[0.14em] text-slate-400">INSTALL SIZE</span>
+            <span className="block text-[10px] font-semibold tracking-[0.14em] text-slate-400">PANEL WIDTH</span>
             <span className="mt-1 block text-xl font-semibold tracking-tight text-sky-200">
-              3 <span className="text-xs font-medium tracking-normal text-sky-300/80">MB</span>
+              360 <span className="text-xs font-medium tracking-normal text-sky-300/80">PX</span>
             </span>
           </div>
 
           <Image
             src="/clashbar-black.png"
-            alt="ClashBar 深色菜单栏界面"
+            alt="ClashBar 原版深色面板布局参考，不是 Windows 验收截图"
             width={812}
             height={1580}
             priority
             className="relative z-10 mx-auto h-auto max-h-[640px] w-auto max-w-full rounded-[1.75rem] object-contain drop-shadow-[0_28px_56px_rgba(0,0,0,0.75)]"
           />
+          <p className="relative z-10 mt-3 text-center text-xs text-slate-400">原版布局参考；Windows 实际效果以客户端为准。</p>
         </div>
       </section>
 
@@ -191,8 +192,8 @@ export default function HomePage() {
       <section className="relative mx-auto max-w-[1200px] px-6 py-20 sm:px-8 lg:py-24">
         <SectionHeading
           eyebrow="为什么选择 ClashBar"
-          title="为菜单栏而生的代理体验"
-          description="不做重型套件，只把日常最常用的能力做好、做稳、做轻。"
+          title="围绕托盘面板的代理体验"
+          description="配置、网络接管和排障集中在同一套操作路径中。"
         />
         <div className="grid gap-4 md:grid-cols-3">
           {pillars.map((pillar) => (
@@ -215,7 +216,8 @@ export default function HomePage() {
         <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0 max-w-2xl">
             <p className="text-xs font-semibold tracking-[0.16em] text-sky-300/90">功能概览</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-white sm:text-4xl">原生菜单栏控制台</h2>
+            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-white sm:text-4xl">Windows 托盘控制台</h2>
+            <p className="mt-2 text-xs text-slate-400">以下卡片为功能示意，速率、连接和节点均为演示数据。</p>
             <p className="mt-2.5 text-sm leading-6 text-slate-400">
               节点 · 分流 · 连接 · 日志 · 设置，以及系统代理、TUN、订阅与远程管理——一屏扫完。
             </p>
@@ -485,7 +487,7 @@ export default function HomePage() {
                     <span className="rounded-full border border-sky-400/30 bg-black/30 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-sky-300">
                       当前
                     </span>
-                    <ShortcutKey>⌃⌘1</ShortcutKey>
+                    <ShortcutKey>Ctrl⇧1</ShortcutKey>
                   </div>
                 </div>
               </div>
@@ -495,7 +497,7 @@ export default function HomePage() {
                     <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white">GLOBAL</div>
                     <div className="mt-0.5 text-[13px] font-medium text-white">全局代理</div>
                   </div>
-                  <ShortcutKey>⌃⌘2</ShortcutKey>
+                  <ShortcutKey>Ctrl⇧2</ShortcutKey>
                 </div>
               </div>
               <div className="flex min-h-0 flex-1 items-center rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
@@ -504,7 +506,7 @@ export default function HomePage() {
                     <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white">DIRECT</div>
                     <div className="mt-0.5 text-[13px] font-medium text-white">全局直连</div>
                   </div>
-                  <ShortcutKey>⌃⌘3</ShortcutKey>
+                  <ShortcutKey>Ctrl⇧3</ShortcutKey>
                 </div>
               </div>
             </div>
@@ -516,7 +518,7 @@ export default function HomePage() {
           >
             <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
               <h3 className="text-base font-semibold tracking-tight text-white">节点切换</h3>
-              <ShortcutKey>⌘⌥1</ShortcutKey>
+              <ShortcutKey>Ctrl Alt 1</ShortcutKey>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-1">
               {[
@@ -798,7 +800,7 @@ export default function HomePage() {
               ClashBar
             </div>
             <p className="mt-3 text-sm leading-6 text-slate-500">
-              面向 macOS 的原生菜单栏 mihomo 客户端。轻量、开源、专注日常使用。
+              面向 Windows 的 Rust + Tauri mihomo 客户端。开源，保留紧凑面板与日常控制路径。
             </p>
           </div>
           <div className="grid grid-cols-2 gap-10 sm:grid-cols-3 sm:gap-16">
@@ -809,7 +811,7 @@ export default function HomePage() {
                 { label: "快速开始", href: "#quick-start" },
                 {
                   label: "下载",
-                  href: "https://github.com/Sitoi/ClashBar/releases",
+                  href: "https://github.com/Cyli00/ClashBar/releases",
                   external: true,
                 },
               ]}
@@ -828,12 +830,12 @@ export default function HomePage() {
               links={[
                 {
                   label: "GitHub",
-                  href: "https://github.com/Sitoi/ClashBar",
+                  href: "https://github.com/Cyli00/ClashBar",
                   external: true,
                 },
                 {
                   label: "Releases",
-                  href: "https://github.com/Sitoi/ClashBar/releases",
+                  href: "https://github.com/Cyli00/ClashBar/releases",
                   external: true,
                 },
                 {
@@ -843,7 +845,7 @@ export default function HomePage() {
                 },
                 {
                   label: "问题反馈",
-                  href: "https://github.com/Sitoi/ClashBar/issues",
+                  href: "https://github.com/Cyli00/ClashBar/issues",
                   external: true,
                 },
               ]}

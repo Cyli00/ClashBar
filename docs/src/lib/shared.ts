@@ -4,7 +4,7 @@ export const docsImageRoute = "/og/docs";
 export const docsContentRoute = "/llms.mdx/docs";
 
 export const gitConfig = {
-  user: "Sitoi",
+  user: "Cyli00",
   repo: "ClashBar",
   branch: "main",
 };

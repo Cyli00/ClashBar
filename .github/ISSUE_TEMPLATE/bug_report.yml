@@ -1,81 +1,57 @@
 name: 错误反馈
-description: '提交 ClashBar Bug'
+description: 提交 Rust + Tauri 客户端问题
 title: '[Bug] '
 labels: ['bug']
 body:
   - type: checkboxes
     id: ensure
     attributes:
-      label: 验证步骤
-      description: 在提交之前，请勾选以下选项以证明您已经阅读并理解了以下要求，否则该 issue 将被关闭。
+      label: 提交前检查
       options:
-        - label: 我已在 [Issue Tracker](https://github.com/Sitoi/ClashBar/issues) 中搜索过相同或类似问题，没有找到已有记录。
+        - label: 我已在 [Issue Tracker](https://github.com/Cyli00/ClashBar/issues) 搜索过相同问题。
           required: false
-        - label: 应用已放置于 `/Applications/ClashBar.app`，而非直接从 DMG 或其他目录运行（系统代理功能依赖此路径）。
+        - label: 我提供的配置、日志和截图已经移除订阅地址、节点密码、控制器密钥等敏感信息。
           required: true
-        - label: 我同一时间只保留一个 mihomo / Clash 系客户端接管系统代理，已退出 ClashX、Clash Verge、Clash Nyanpasu、Clash Party、FlClash 等同类软件。
-          required: true
-        - label: 我已在 **系统设置 → 通用 → 登录项** 中确认 `ClashBar` 后台项目已被允许；若已允许但仍异常，已先手动关闭再重新开启一次。
-          required: true
-        - label: 我已执行 `Restart` 清理运行状态后，重新验证问题仍然存在。
-          required: true
-        - label: 我已在 `Logs` 页面将 `log-level` 调整为 `DEBUG`，并提供了 `~/Library/Application Support/clashbar/logs` 下的完整日志。
-          required: true
-        - label: 我理解：未附上完整日志的 Issue 将被无条件关闭，不作任何回复。
-          required: true
-        - label: 我提供了可在本地重现问题的最简配置文件，不包含敏感信息（服务器地址、密码、端口等）。
-          required: true
-
   - type: dropdown
+    id: os
     attributes:
       label: 操作系统
-      description: 请提供操作系统类型
-      multiple: true
       options:
-        - MacOS(M芯片)
-        - MacOS(Intel芯片)
+        - Windows 11 x64
+        - Windows 10 x64
+        - 其它（请说明编译与运行环境）
+    validations:
+      required: true
   - type: input
+    id: versions
     attributes:
-      label: 系统版本
-      description: 请提供出现问题的操作系统版本
+      label: 系统、ClashBar 和 mihomo 版本
+      description: 应用底部显示 ClashBar 与 mihomo 版本；另请提供 Windows 版本及显示缩放比例。
     validations:
       required: true
   - type: textarea
+    id: description
     attributes:
-      label: Mihomo 版本
-      description: 提供 App 主页左下角的 Mihomo 版本号
+      label: 实际行为与预期行为
+      description: 请说明使用本机还是远程控制器，是否开启系统代理或 TUN。
     validations:
       required: true
   - type: textarea
+    id: reproduction
     attributes:
-      label: ClashBar 版本
-      description: 提供 App 主页右下角的版本号
+      label: 重现步骤
+      description: 列出从启动应用到出现问题的操作。
     validations:
       required: true
   - type: textarea
+    id: config
     attributes:
+      label: 最小配置（按需）
+      description: 使用临时节点或 DIRECT 示例；不要粘贴真实订阅、密码或完整个人配置。
       render: yaml
-      label: 配置文件
-      description: |-
-        在下方附上 Mihomo 配置文件
-        请确保配置文件中没有敏感信息（比如：服务器地址，密码，端口等）
-        以及确保可以在本地（如果是代理协议问题，请确保本地服务器可用于复现）使用 Mihomo 原始命令行程序重现错误的配置文件
-    validations:
-      required: true
   - type: textarea
+    id: logs
     attributes:
-      label: 描述
-      description: 请提供错误的详细描述。
-    validations:
-      required: true
-  - type: textarea
-    attributes:
-      label: 重现方式
-      description: 请提供重现错误的步骤
-    validations:
-      required: true
-  - type: textarea
-    attributes:
-      label: 日志
-      description: 在下方附上 Mihomo Core 的运行日志，`log-level` 使用 `DEBUG`
-      render: shell
+      label: 相关日志与截图
+      description: 从日志标签复制相关记录，或附上应用数据目录 logs 中经过脱敏的片段。
+      render: text

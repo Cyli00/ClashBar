@@ -1,145 +1,48 @@
 ---
 title: 常见问题
-description: 安装、内核、系统代理、节点、订阅、GEO 与 API 鉴权等问题排查。
+description: Windows内核、配置、代理、TUN、订阅和远程连接排查。
 ---
 
-按现象查找；先确认是否完成 [快速开始](/docs/quick-start) 中的安装与登录项设置。数据目录见 [配置与订阅](/docs/configuration)，网络接管见 [系统代理与 TUN](/docs/network-mode)。
+先核对控制目标是本机还是远程。配置与日志路径见 [配置与订阅](/docs/configuration)。
 
 ## 无法启动内核
 
-确认：
+确认已选择Windows可执行内核、配置有效、监听端口未占用。日志区分配置校验失败、进程退出和控制器未就绪。应用不会只因进程存在就显示运行中。
 
-1. 文件位于 `~/Library/Application Support/clashbar/core/mihomo`。
-2. 文件名为 `mihomo`，并具有可执行权限。
-3. 当前已选中一份有效配置（见配置发现规则）。
-4. 「日志」中无配置校验失败或端口占用错误。
+首次Geo/MMDB下载需要网络可达，资源位于内核运行目录。内核就绪后可使用「更新Geo数据库」。
 
-含 Core / 无 Core 构建差异见 [快速开始 · 准备 Mihomo 内核](/docs/quick-start#2-准备-mihomo-内核)。可用「打开内核目录」核对路径。
+## 系统代理开关回退
 
-## macOS 提示「已损坏」或「无法验证开发者」
+确认内核运行中，且至少一个HTTP/SOCKS/混合端口可用。其它软件接管后，ClashBar不会强行恢复旧值。关闭其它代理客户端后重试，并查看错误提示。
 
-**现象**：首次启动被系统拦截。  
-**原因**：Gatekeeper 对未公证应用的默认策略。
+强制终止后无法联网时，先重新打开ClashBar恢复快照，再检查Windows的手动代理和PAC设置。
 
-1. 将应用放到 `/Applications/ClashBar.app`。
-2. 打开 **系统设置 → 隐私与安全性**，选择「仍要打开」。
-3. 仍被隔离标记拦截时（确认来源可信）：
+## TUN开启失败
 
-```bash
-sudo xattr -r -d com.apple.quarantine /Applications/ClashBar.app
-```
+确认UAC授权完成、所选内核支持协议栈且日志没有驱动或权限错误。`mips`需要mihomo 1.19.31+。取消授权或实际状态不符都会显示失败，修改内核后可能需要再次授权。远程权限由远端管理者负责。
 
-## 系统代理开启失败 / 开关没有反应
+## 订阅更新失败或未生效
 
-**现象**：点击系统代理未生效或立即回退。  
-**原因**：helper 还没装上、管理员授权被取消、安装位置不对，或被其它客户端抢占。
+检查来源可达性、服务是否过期或限流，以及内容是否为有效mihomo YAML。限制为8MiB、30秒、最多10次重定向。单个失败不会中断其余来源。
 
-1. 使用打包后的应用，并位于 `/Applications`。
-2. 再开一次系统代理。第一次会要求管理员密码；取消后需要再开一次才会重新询问。
-3. 若系统提示允许后台项目，到 **系统设置 → 通用 → 登录项** 允许该 helper。允许一次即可，更新 app 不用重复。
-4. 退出其它 mihomo / Clash 系客户端。
-5. 执行一次 **重启内核**，再开系统代理。
-6. 仍失败时在「日志」中查看关键错误并提交 Issue。
+活动配置变化后会验证并应用；内容相同不会重复重启。失败时保留原配置，修正来源后可手动重试。
 
-删除 ClashBar 前，如需卸掉已经安装的 helper：
+## 节点切换后请求未变化
 
-```bash
-sudo launchctl bootout system/com.clashbar.helper
-sudo rm -f /Library/LaunchDaemons/com.clashbar.helper.plist \
-  /Library/PrivilegedHelperTools/com.clashbar.helper \
-  /Library/PrivilegedHelperTools/com.clashbar.helper.version
-```
+检查模式、节点和延迟，在「连接」查看实际链路，在「分流」核对规则。已有长连接可能继续使用原链路，可关闭对应连接后重试。
 
-## 配置导入或重载失败
+## Wi-Fi自动切换不生效
 
-ClashBar 会调用 Mihomo 校验 YAML。请在「日志」中查看错误行号，检查缩进、代理组引用、规则提供者与端口冲突。修正后重新导入，或执行一次「启动 / 重启内核」。
+确认自动切换开启、SSID可读、有绑定、配置仍存在。权限不足时打开Windows定位设置；没有无线网卡或WLAN服务停止会分别提示。
 
-## 订阅更新失败
+## 远程返回401或无法连接
 
-检查链接是否可从当前网络访问，以及服务商是否过期、限流。单个订阅失败不会阻止其它订阅更新；日志中会有成功/失败数量。
+核对主机、端口、HTTP/HTTPS与secret。控制器端口不是HTTP代理端口；HTTPS需要有效证书。其它客户端残留进程占用端口时，请求可能到达另一实例。
 
-## 远程配置更新后未生效
+## 图标或网速缺失
 
-**现象**：远程更新成功，但节点或规则未刷新。
+图标超过2MiB、格式不支持或SVG含活动内容会使用默认图形。监控断开自动重连，5秒前的遥测不会继续视为当前数据；检查控制器与日志。
 
-1. 更新完成后应用会自动让内核重读当前配置；若仍未生效，执行一次**重启内核**（<kbd>⌘⇧R</kbd>）。
-2. 重新选择目标配置，确认当前生效项已切换。
-3. 在「日志」中检查拉取失败或解析错误。
+## 提交问题
 
-## 开启 TUN 失败
-
-常见原因：找不到/无法执行 mihomo、管理员授权取消、内核重启后 TUN 未生效。确认内核路径与权限后重试；切换内核后可能需重新授权。详见 [系统代理与 TUN](/docs/network-mode)。
-
-## 切换节点后网络无变化
-
-**现象**：已切换代理组或节点，访问效果不变。
-
-1. 执行延迟测试，确认目标节点可用。
-2. 确认模式为 **规则** 或 **全局**（勿误停在 **直连**）。
-3. 重新选择节点，并 **重启内核**。
-
-## 请求没有按预期走代理
-
-**现象**：部分域名/IP 与预期策略不一致。
-
-1. 退出其它 mihomo / Clash 系客户端，排除系统代理被覆盖。
-2. 在「分流」检查命中规则与策略。
-3. 在「连接」核对目标地址与链路。
-4. 在「日志」用关键词交叉验证路由决策。
-
-## 浏览器仍无法联网
-
-1. 内核是否为「运行中」。
-2. 系统代理或 TUN 是否已开启。
-3. 节点是否可用并完成延迟测试。
-4. 「连接」「日志」中是否有错误规则、错误组或 DNS 错误。
-
-## 日志提示找不到 MMDB 并开始下载
-
-**现象**：日志含 `can't find MMDB, start download`，网络或规则异常。  
-**原因**：GeoIP 数据库（如 `Country.mmdb`）缺失，内核正在自动下载；首次启动或数据目录被清理后常见。
-
-1. 使用**默认配置**启动一次，等待自动下载完成（需网络可达）。
-2. 下载完成后重新启动内核。
-3. 网络受限时，可手动将 `Country.mmdb` 放入 `~/Library/Application Support/clashbar/` 后再启动。
-
-也可在设置中尝试「更新 Geo 数据库」（内核运行中）。见 [设置与维护](/docs/settings)。
-
-## 出现 bad response 或 API 鉴权失败（401）
-
-**现象**：弹出 `There was a bad response from the server` 或 `API request failed (401)`。  
-**原因**：其它 Clash/mihomo 客户端残留进程占用同一端口，导致 API 鉴权失败。
-
-1. 退出所有其它 mihomo / Clash 系客户端。
-2. 在 ClashBar 中 **重启内核**，确认由本应用独立拉起。
-3. 若仍复现，可能有残留进程占端口——**重启电脑**后重试。
-
-## Wi‑Fi 自动切换不生效
-
-1. 已开启「Wi‑Fi 自动切换」。
-2. 已授予 Wi‑Fi / 定位相关权限，系统定位服务已打开。
-3. 当前 SSID 已绑定到仍存在的配置。
-4. 日志中是否有权限不足或配置缺失记录。
-
-详见 [SSID 策略](/docs/ssid-strategy)。
-
-## 远程机器连不上
-
-1. 主机、端口与 secret 与远端 External Controller 一致。
-2. 本机网络可达该地址。
-3. 在机器切换器中查看失败原因。
-
-详见 [远程机器](/docs/remote-machine)。
-
-## 配置、日志和状态文件在哪里
-
-根目录：`~/Library/Application Support/clashbar`。分项职责与配置发现规则见 [配置与订阅](/docs/configuration)。
-
-## 如何提交问题
-
-- [GitHub Issues](https://github.com/Sitoi/ClashBar/issues)
-- Telegram 社区：[t.me/clashbars](https://t.me/clashbars)
-
-请附上 ClashBar 版本、macOS 版本、本机或远程内核，以及已脱敏日志。勿上传订阅链接与密钥。
-
-功能对照见 [功能总览](/docs/features)；设计与许可见 [关于](/docs/about)。
+在 [Cyli00/ClashBar Issues](https://github.com/Cyli00/ClashBar/issues) 附上客户端、Windows、内核版本和脱敏日志。不要上传完整订阅链接、secret或整个数据目录。
