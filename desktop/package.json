@@ -10,6 +10,7 @@
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
+    "core:bundle": "node scripts/prepare-core.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:e2e": "playwright test --config tests/playwright.config.ts",
     "tauri": "tauri"

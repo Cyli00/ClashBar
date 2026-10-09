@@ -52,6 +52,7 @@
     "targets": ["nsis"],
     "shortDescription": "ClashBar Windows client for mihomo",
     "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": { "resources/bin/": "bin/" },
     "windows": { "nsis": { "installMode": "currentUser" } }
   }
 }
