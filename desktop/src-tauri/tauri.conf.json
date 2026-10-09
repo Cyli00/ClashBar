@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ClashBar",
+  "version": "0.1.0",
+  "identifier": "io.github.cyli00.clashbar",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "ClashBar",
+      "width": 360,
+      "height": 320,
+      "visible": false,
+      "decorations": false,
+      "resizable": false,
+      "maximizable": false,
+      "minimizable": false,
+      "transparent": true,
+      "shadow": false,
+      "skipTaskbar": true,
+      "alwaysOnTop": true,
+      "focus": false
+    }, {
+      "label": "submenu",
+      "title": "ClashBar Menu",
+      "url": "index.html?surface=submenu",
+      "width": 240,
+      "height": 160,
+      "visible": false,
+      "decorations": false,
+      "resizable": false,
+      "maximizable": false,
+      "minimizable": false,
+      "transparent": true,
+      "shadow": false,
+      "skipTaskbar": true,
+      "alwaysOnTop": true,
+      "focus": false
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
+      "capabilities": ["main"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "shortDescription": "ClashBar Windows client for mihomo",
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  }
+}
