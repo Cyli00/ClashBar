@@ -10,6 +10,10 @@ use std::path::PathBuf;
 pub struct SystemProxy {
     #[cfg(windows)]
     snapshot_path: PathBuf,
+    #[cfg(all(windows, test))]
+    test_enabled: Option<std::sync::atomic::AtomicBool>,
+    #[cfg(all(windows, test))]
+    test_fail_enable: std::sync::atomic::AtomicBool,
 }
 
 impl SystemProxy {
@@ -19,7 +23,24 @@ impl SystemProxy {
         Self {
             #[cfg(windows)]
             snapshot_path: data_dir.join("system-proxy-backup.json"),
+            #[cfg(all(windows, test))]
+            test_enabled: None,
+            #[cfg(all(windows, test))]
+            test_fail_enable: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    #[cfg(all(windows, test))]
+    pub(crate) fn memory(directory: PathBuf) -> Self {
+        let mut proxy = Self::new(directory);
+        proxy.test_enabled = Some(std::sync::atomic::AtomicBool::new(false));
+        proxy
+    }
+
+    #[cfg(all(windows, test))]
+    pub(crate) fn fail_next_enable(&self) {
+        self.test_fail_enable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Restore an interrupted session before starting a new core process.
@@ -33,12 +54,78 @@ impl SystemProxy {
     }
 
     #[cfg(windows)]
+    pub fn enable_remote(
+        &self,
+        host: &str,
+        http_port: Option<u16>,
+        socks_port: Option<u16>,
+    ) -> Result<(), String> {
+        let server = proxy_server(host, http_port, socks_port)?;
+        transaction::enable_server(&self.snapshot_path, &native::WinInet, &server)
+    }
+
+    pub fn enable_with_exceptions(
+        &self,
+        host: &str,
+        http_port: Option<u16>,
+        socks_port: Option<u16>,
+        exceptions: &[String],
+    ) -> Result<(), String> {
+        let server = proxy_server(host, http_port, socks_port)?;
+        let bypass = bypass_list(exceptions)?;
+        #[cfg(all(windows, test))]
+        if let Some(enabled) = &self.test_enabled {
+            if self
+                .test_fail_enable
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err("测试代理应用失败。".into());
+            }
+            enabled.store(true, std::sync::atomic::Ordering::SeqCst);
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            transaction::enable_server_with_bypass(
+                &self.snapshot_path,
+                &native::WinInet,
+                &server,
+                &bypass,
+            )
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (server, bypass);
+            Err("此平台尚未接入系统代理管理。".into())
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn enable_remote(
+        &self,
+        _host: &str,
+        _http_port: Option<u16>,
+        _socks_port: Option<u16>,
+    ) -> Result<(), String> {
+        Err("System proxy management is currently supported on Windows only".into())
+    }
+
+    #[cfg(windows)]
     pub fn restore(&self) -> Result<(), String> {
+        #[cfg(test)]
+        if let Some(enabled) = &self.test_enabled {
+            enabled.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Ok(());
+        }
         transaction::restore(&self.snapshot_path, &native::WinInet)
     }
 
     #[cfg(windows)]
     pub fn is_enabled(&self) -> Result<bool, String> {
+        #[cfg(test)]
+        if let Some(enabled) = &self.test_enabled {
+            return Ok(enabled.load(std::sync::atomic::Ordering::SeqCst));
+        }
         transaction::is_enabled(&self.snapshot_path, &native::WinInet)
     }
 
@@ -56,6 +143,125 @@ impl SystemProxy {
     pub fn is_enabled(&self) -> Result<bool, String> {
         Err("System proxy management is currently supported on Windows only".into())
     }
+}
+
+pub fn default_exceptions() -> Vec<String> {
+    [
+        "::1",
+        "*.local",
+        "<local>",
+        "localhost",
+        "127.0.0.1",
+        "192.168.0.0/16",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+pub fn normalize_exceptions(exceptions: &[String]) -> Result<Vec<String>, String> {
+    if exceptions.len() > 256 {
+        return Err("代理绕过列表最多保存 256 项。".into());
+    }
+    let mut values: Vec<String> = Vec::new();
+    for value in exceptions {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if value.len() > 512 || value.chars().any(|c| c.is_control() || c == ';') {
+            return Err("代理绕过项不能包含控制字符或分号，每项最多 512 字节。".into());
+        }
+        if !values
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(value))
+        {
+            values.push(value.to_owned());
+        }
+    }
+    Ok(values)
+}
+
+pub fn bypass_list(exceptions: &[String]) -> Result<String, String> {
+    let mut patterns = Vec::new();
+    for value in normalize_exceptions(exceptions)? {
+        if let Some((address, prefix)) = value.split_once('/') {
+            if let Ok(address) = address.parse::<std::net::Ipv4Addr>() {
+                let prefix = prefix
+                    .parse::<u8>()
+                    .map_err(|_| "代理绕过的 IPv4 CIDR 前缀无效。")?;
+                if prefix > 32 {
+                    return Err("代理绕过的 IPv4 CIDR 前缀必须为 0 至 32。".into());
+                }
+                if prefix == 0 {
+                    patterns.push("*".into());
+                    continue;
+                }
+                let network = u32::from(address) & (u32::MAX << (32 - prefix));
+                let octets = network.to_be_bytes();
+                let full = usize::from(prefix / 8);
+                let partial = prefix % 8;
+                if partial == 0 {
+                    let base = octets[..full]
+                        .iter()
+                        .map(u8::to_string)
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    patterns.push(if full < 4 { format!("{base}.*") } else { base });
+                } else {
+                    // WinINet 不识别 CIDR；按边界字节展开，最多生成 128 个等价模式。
+                    for suffix in 0..(1u16 << (8 - partial)) {
+                        let mut bytes = octets[..full].to_vec();
+                        bytes.push(octets[full] + suffix as u8);
+                        let base = bytes
+                            .iter()
+                            .map(u8::to_string)
+                            .collect::<Vec<_>>()
+                            .join(".");
+                        patterns.push(if bytes.len() < 4 {
+                            format!("{base}.*")
+                        } else {
+                            base
+                        });
+                    }
+                }
+                continue;
+            }
+        }
+        if value.parse::<std::net::Ipv6Addr>().is_ok() {
+            patterns.push(format!("[{value}]"));
+        } else {
+            patterns.push(value);
+        }
+    }
+    Ok(patterns.join(";"))
+}
+
+pub fn proxy_server(
+    host: &str,
+    http_port: Option<u16>,
+    socks_port: Option<u16>,
+) -> Result<String, String> {
+    let host = crate::remote::normalize_host(host)?;
+    let host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host
+    };
+    let mut protocols = Vec::new();
+    if let Some(port) = http_port.filter(|port| *port > 0) {
+        protocols.push(format!("http={host}:{port}"));
+        protocols.push(format!("https={host}:{port}"));
+    }
+    if let Some(port) = socks_port.filter(|port| *port > 0) {
+        protocols.push(format!("socks={host}:{port}"));
+    }
+    if protocols.is_empty() {
+        return Err("远程内核没有启用 HTTP、SOCKS 或混合代理端口。".into());
+    }
+    Ok(protocols.join(";"))
 }
 
 #[cfg(any(windows, test))]
@@ -81,11 +287,11 @@ mod transaction {
     }
 
     impl ProxySettings {
-        fn for_port(original: &Self, port: u16) -> Self {
+        fn for_server(original: &Self, server: &str, bypass: &str) -> Self {
             Self {
                 flags: MANUAL_PROXY_FLAGS,
-                server: format!("http=127.0.0.1:{port};https=127.0.0.1:{port}"),
-                bypass: "<local>;localhost;127.*;[::1]".into(),
+                server: server.to_owned(),
+                bypass: bypass.into(),
                 // Keep the URL stored but inactive; restore includes its flags.
                 pac_url: original.pac_url.clone(),
             }
@@ -249,8 +455,29 @@ mod transaction {
         if port == 0 {
             return Err("Proxy port must be between 1 and 65535".into());
         }
+        enable_server(
+            path,
+            platform,
+            &format!("http=127.0.0.1:{port};https=127.0.0.1:{port}"),
+        )
+    }
+
+    pub(super) fn enable_server(
+        path: &Path,
+        platform: &impl Platform,
+        server: &str,
+    ) -> Result<(), String> {
+        enable_server_with_bypass(path, platform, server, "<local>;localhost;127.*;[::1]")
+    }
+
+    pub(super) fn enable_server_with_bypass(
+        path: &Path,
+        platform: &impl Platform,
+        server: &str,
+        bypass: &str,
+    ) -> Result<(), String> {
         if let Some(snapshot) = read_snapshot(path)? {
-            let desired = ProxySettings::for_port(&snapshot.original, port);
+            let desired = ProxySettings::for_server(&snapshot.original, server, bypass);
             if platform.read()? == snapshot.applied && desired == snapshot.applied {
                 return Ok(()); // Never replace the original on repeated enable.
             }
@@ -260,7 +487,7 @@ mod transaction {
         }
         let original = platform.read()?;
         original.validate()?;
-        let applied = ProxySettings::for_port(&original, port);
+        let applied = ProxySettings::for_server(&original, server, bypass);
         let snapshot = Snapshot {
             version: 1,
             original,
@@ -478,6 +705,75 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
+    #[test]
+    fn custom_bypass_is_normalized_and_rejects_injected_entries() {
+        assert_eq!(
+            super::bypass_list(&[
+                " *.example.com ".into(),
+                "localhost".into(),
+                "*.example.com".into(),
+                "".into()
+            ])
+            .unwrap(),
+            "*.example.com;localhost"
+        );
+        assert_eq!(super::bypass_list(&[]).unwrap(), "");
+        for value in ["localhost;*", "local\nother", "null\0host"] {
+            assert!(super::bypass_list(&[value.into()]).is_err());
+        }
+        assert!(super::bypass_list(&vec!["host".into(); 257]).is_err());
+    }
+
+    #[test]
+    fn default_private_network_cidrs_become_equivalent_windows_patterns() {
+        let patterns = super::bypass_list(&super::default_exceptions()).unwrap();
+        assert!(patterns.contains("192.168.*"));
+        assert!(patterns.contains("10.*"));
+        assert!(patterns.contains("[::1]"));
+        for subnet in 16..=31 {
+            assert!(patterns
+                .split(';')
+                .any(|value| value == format!("172.{subnet}.*")));
+        }
+        assert!(!patterns.contains("172.32.*"));
+        assert_eq!(
+            super::bypass_list(&["192.0.2.3/31".into()]).unwrap(),
+            "192.0.2.2;192.0.2.3"
+        );
+        assert_eq!(
+            super::bypass_list(&["127.0.0.1/32".into()]).unwrap(),
+            "127.0.0.1"
+        );
+        assert!(super::bypass_list(&["127.0.0.1/33".into()]).is_err());
+    }
+
+    #[test]
+    fn changing_bypass_preserves_original_settings_for_crash_recovery() {
+        let dir = TestDirectory::new();
+        let platform = FakeWindows::new();
+        let original = platform.read().unwrap();
+        transaction::enable(&dir.snapshot(), &platform, 7890).unwrap();
+        let server = super::proxy_server("127.0.0.1", Some(7891), Some(7892)).unwrap();
+        transaction::enable_server_with_bypass(
+            &dir.snapshot(),
+            &platform,
+            &server,
+            "*.example.com;10.*",
+        )
+        .unwrap();
+        assert_eq!(platform.read().unwrap().bypass, "*.example.com;10.*");
+        assert_eq!(platform.read().unwrap().server, server);
+        assert_eq!(
+            transaction::read_snapshot(&dir.snapshot())
+                .unwrap()
+                .unwrap()
+                .original,
+            original
+        );
+        transaction::restore(&dir.snapshot(), &platform).unwrap();
+        assert_eq!(platform.read().unwrap(), original);
+    }
+
     struct TestDirectory(PathBuf);
     impl TestDirectory {
         fn new() -> Self {
@@ -552,6 +848,26 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn remote_proxy_switches_preserve_the_original_windows_snapshot() {
+        let dir = TestDirectory::new();
+        let platform = FakeWindows::new();
+        let original = platform.read().unwrap();
+        transaction::enable(&dir.snapshot(), &platform, 7890).unwrap();
+        let remote = super::proxy_server("2001:db8::1", Some(8890), Some(8891)).unwrap();
+        assert_eq!(
+            remote,
+            "http=[2001:db8::1]:8890;https=[2001:db8::1]:8890;socks=[2001:db8::1]:8891"
+        );
+        transaction::enable_server(&dir.snapshot(), &platform, &remote).unwrap();
+        assert_eq!(platform.read().unwrap().server, remote);
+        transaction::enable_server(&dir.snapshot(), &platform, &remote).unwrap();
+        transaction::restore(&dir.snapshot(), &platform).unwrap();
+        assert_eq!(platform.read().unwrap(), original);
+        assert!(super::proxy_server("evil;http=other", Some(8890), None).is_err());
+        assert!(super::proxy_server("example.com", None, None).is_err());
     }
 
     #[test]

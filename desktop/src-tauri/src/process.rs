@@ -7,6 +7,20 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(windows)]
+mod elevated;
+
+pub fn run_elevated_helper_if_requested() -> bool {
+    #[cfg(windows)]
+    {
+        elevated::run_if_requested()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct LogEntry {
     pub timestamp: u64,
@@ -24,18 +38,25 @@ pub fn append(logs: &Logs, message: impl Into<String>) {
 }
 
 fn append_from(logs: &Logs, source: &'static str, message: impl Into<String>) {
-    if let Ok(mut lines) = logs.lock() {
-        if lines.len() >= 500 {
-            lines.pop_front();
-        }
-        lines.push_back(LogEntry {
+    append_entry(
+        logs,
+        LogEntry {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
             source,
             message: message.into().chars().take(4096).collect(),
-        });
+        },
+    );
+}
+
+pub fn append_entry(logs: &Logs, entry: LogEntry) {
+    if let Ok(mut lines) = logs.lock() {
+        if lines.len() >= 500 {
+            lines.pop_front();
+        }
+        lines.push_back(entry);
     }
 }
 
@@ -65,7 +86,7 @@ fn capture(reader: impl Read + Send + 'static, logs: Logs, secret: String) {
     });
 }
 
-fn emit_line(logs: &Logs, line: &[u8], secret: &str) {
+pub(crate) fn emit_line(logs: &Logs, line: &[u8], secret: &str) {
     let value = String::from_utf8_lossy(line);
     let lower = value.to_ascii_lowercase();
     if [
@@ -87,9 +108,11 @@ fn emit_line(logs: &Logs, line: &[u8], secret: &str) {
 }
 
 pub struct ManagedChild {
-    child: Child,
+    child: Option<Child>,
     #[cfg(windows)]
-    _job: Job,
+    _job: Option<Job>,
+    #[cfg(windows)]
+    elevated: Option<elevated::ElevatedChild>,
 }
 
 impl ManagedChild {
@@ -138,25 +161,72 @@ impl ManagedChild {
             capture(stderr, logs.clone(), secret.to_owned());
         }
         Ok(Self {
-            child,
+            child: Some(child),
             #[cfg(windows)]
-            _job: job,
+            _job: Some(job),
+            #[cfg(windows)]
+            elevated: None,
         })
     }
 
+    pub fn has_tun_permissions(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.elevated.is_some() || elevated::is_elevated().unwrap_or(false)
+        }
+        #[cfg(not(windows))]
+        {
+            true
+        }
+    }
+
+    pub fn spawn_for_tun(
+        executable: &Path,
+        data_dir: &Path,
+        config: &Path,
+        logs: &Logs,
+        secret: &str,
+    ) -> Result<Self, String> {
+        #[cfg(windows)]
+        if !elevated::is_elevated()? {
+            return Ok(Self {
+                child: None,
+                _job: None,
+                elevated: Some(elevated::ElevatedChild::spawn(
+                    executable, data_dir, config, logs, secret,
+                )?),
+            });
+        }
+        Self::spawn(executable, data_dir, config, false, logs, secret)
+    }
+
     pub fn exited(&mut self) -> Result<Option<std::process::ExitStatus>, String> {
+        #[cfg(windows)]
+        if let Some(child) = &mut self.elevated {
+            return child.exited();
+        }
         self.child
+            .as_mut()
+            .ok_or("内核进程不存在。")?
             .try_wait()
             .map_err(|e| format!("Cannot inspect the core process: {e}"))
     }
 
     pub fn kill(&mut self) -> Result<(), String> {
+        #[cfg(windows)]
+        if let Some(child) = &mut self.elevated {
+            return child.kill();
+        }
         if self.exited()?.is_none() {
             self.child
+                .as_mut()
+                .ok_or("内核进程不存在。")?
                 .kill()
                 .map_err(|e| format!("Cannot stop the core: {e}"))?;
         }
         self.child
+            .as_mut()
+            .ok_or("内核进程不存在。")?
             .wait()
             .map_err(|e| format!("Cannot reap the core: {e}"))?;
         Ok(())
@@ -183,8 +253,7 @@ impl ManagedChild {
 
 impl Drop for ManagedChild {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = self.kill();
     }
 }
 

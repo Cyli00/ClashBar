@@ -85,6 +85,8 @@ pub struct MenuItem {
     secondary_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     secondary_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secondary_kind: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -489,6 +491,10 @@ fn validate_menu(menu: &AttachedMenu) -> Result<(), String> {
     let mut identifiers = HashSet::new();
     for item in &menu.items {
         if !matches!(item.kind.as_deref(), None | Some("item" | "separator"))
+            || !matches!(
+                item.secondary_kind.as_deref(),
+                None | Some("delay" | "context")
+            )
             || item.label.len() > 4096
             || item.detail.as_ref().is_some_and(|s| s.len() > 4096)
             || item.value.as_ref().is_some_and(|s| s.len() > 4096)
@@ -902,6 +908,18 @@ mod tests {
         let mut menu: AttachedMenu = serde_json::from_value(serde_json::json!({"id":"nodes","title":"Nodes","items":[{"id":"select-a","label":"A","secondaryId":"test-a"},{"id":"select-b","label":"B"}]})).unwrap();
         assert!(validate_menu(&menu).is_ok());
         menu.items[1].id = "test-a".into();
+        assert!(validate_menu(&menu).is_err());
+    }
+
+    #[test]
+    fn profile_context_action_survives_native_menu_serialization() {
+        let mut menu: AttachedMenu = serde_json::from_value(serde_json::json!({"id":"profiles","title":"配置","items":[{"id":"select","label":"配置.yaml","secondaryId":"manage","secondaryKind":"context","secondaryLabel":"管理配置"}]})).unwrap();
+        assert!(validate_menu(&menu).is_ok());
+        assert_eq!(
+            serde_json::to_value(&menu).unwrap()["items"][0]["secondaryKind"],
+            "context"
+        );
+        menu.items[0].secondary_kind = Some("unknown".into());
         assert!(validate_menu(&menu).is_err());
     }
 }
