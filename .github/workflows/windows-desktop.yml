@@ -74,6 +74,15 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - name: Rust domain and Windows proxy tests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features
+      - name: Real mihomo local proxy and streaming integration
+        shell: bash
+        run: |
+          fixture_dir="$RUNNER_TEMP/clashbar-real-core"
+          mkdir -p "$fixture_dir"
+          curl --fail --location --retry 2 https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-windows-amd64-compatible-v1.19.32.zip -o "$fixture_dir/mihomo.zip"
+          printf '974a4d7ad69aed27aa2e8f91d61113573c14dadb14562c63e58effabf59816f0 *%s\n' "$fixture_dir/mihomo.zip" | sha256sum --check --status
+          unzip -q "$fixture_dir/mihomo.zip" -d "$fixture_dir"
+          CLASHBAR_TEST_MIHOMO="$(cygpath -w "$fixture_dir/mihomo-windows-amd64-compatible.exe")" cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --test real_core -- --ignored
       - name: WinINet proxy restore smoke on disposable runner
         env:
           CLASHBAR_PROXY_INTEGRATION_TEST: '1'
