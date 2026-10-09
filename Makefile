@@ -1,79 +1,29 @@
 SHELL := /bin/bash
+DESKTOP := desktop
 
-ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-SCRIPTS_DIR := $(ROOT_DIR)/Scripts
-BUILD_DIR := $(ROOT_DIR)/.build
-DIST_DIR := $(ROOT_DIR)/dist
-SWIFTPM_DIR := $(ROOT_DIR)/.swiftpm
-PACKAGES_DIR := $(ROOT_DIR)/Packages
-
-APP_NAME ?= ClashBar
-APP_VERSION ?= 0.1.0
-BUILD_NUMBER ?= 1
-TARGET_ARCH ?=
-DMG_SUFFIX ?=
-DMG_VOLUME_NAME ?= $(APP_NAME)
-WITH_CORE ?= 0
-RELEASE_OPTIMIZE_FOR_SIZE ?= 1
-STRIP_BINARIES ?= 1
-
-.PHONY: help build dist dmg clean
+.PHONY: help dev build test format check package
 
 help:
-	@printf "%s\n" \
-		"ClashBar Makefile" \
-		"" \
-		"Targets:" \
-		"  make build        Build dist/$(APP_NAME).app (default: no core)" \
-		"  make dist         Build app + dmg (default: no core)" \
-		"  make dmg          Build dmg from existing dist/$(APP_NAME).app" \
-		"  make clean        Remove .build, dist, .swiftpm and Packages" \
-		"" \
-		"Overrides:" \
-		"  WITH_CORE=1       Bundle mihomo core into the app/dmg" \
-		"  RELEASE_OPTIMIZE_FOR_SIZE=0  Disable -Osize for packaged builds" \
-		"  STRIP_BINARIES=0 Keep packaged app/helper binaries unstripped" \
-		"  TARGET_ARCH=...   Pass through to Swift build/package scripts" \
-		"  APP_VERSION=...   Version used for Info.plist and dmg naming" \
-		"  BUILD_NUMBER=...  Build number used for Info.plist" \
-		"  DMG_SUFFIX=...    Optional dmg filename suffix"
+	@printf '%s\n' 'ClashBar · Rust + Tauri' 'make dev      启动桌面开发环境' 'make build    构建前端与 Rust 客户端' 'make test     单元与浏览器测试' 'make check    类型、格式和 Clippy 检查' 'make package  构建 Windows NSIS 安装包'
 
-format:
-	swiftformat . --config .swiftformat 
-	swiftlint lint --config .swiftlint.yml
+dev:
+	cd $(DESKTOP) && npm run tauri dev
 
 build:
-	APP_NAME="$(APP_NAME)" \
-	APP_VERSION="$(APP_VERSION)" \
-	BUILD_NUMBER="$(BUILD_NUMBER)" \
-	TARGET_ARCH="$(TARGET_ARCH)" \
-	RELEASE_OPTIMIZE_FOR_SIZE="$(RELEASE_OPTIMIZE_FOR_SIZE)" \
-	STRIP_BINARIES="$(STRIP_BINARIES)" \
-	PREPARE_MIHOMO_BINARY="$(WITH_CORE)" \
-	BUNDLE_MIHOMO_BINARY="$(WITH_CORE)" \
-	REQUIRE_MIHOMO_BINARY="$(WITH_CORE)" \
-	"$(SCRIPTS_DIR)/build.sh" app
+	cd $(DESKTOP) && npm run build
+	cargo build --manifest-path $(DESKTOP)/src-tauri/Cargo.toml
 
-dist:
-	APP_NAME="$(APP_NAME)" \
-	APP_VERSION="$(APP_VERSION)" \
-	BUILD_NUMBER="$(BUILD_NUMBER)" \
-	TARGET_ARCH="$(TARGET_ARCH)" \
-	DMG_SUFFIX="$(DMG_SUFFIX)" \
-	DMG_VOLUME_NAME="$(DMG_VOLUME_NAME)" \
-	RELEASE_OPTIMIZE_FOR_SIZE="$(RELEASE_OPTIMIZE_FOR_SIZE)" \
-	STRIP_BINARIES="$(STRIP_BINARIES)" \
-	PREPARE_MIHOMO_BINARY="$(WITH_CORE)" \
-	BUNDLE_MIHOMO_BINARY="$(WITH_CORE)" \
-	REQUIRE_MIHOMO_BINARY="$(WITH_CORE)" \
-	"$(SCRIPTS_DIR)/build.sh" all
+test:
+	cd $(DESKTOP) && npm test && npm run test:e2e
+	cargo test --manifest-path $(DESKTOP)/src-tauri/Cargo.toml --no-default-features
 
-dmg:
-	APP_NAME="$(APP_NAME)" \
-	APP_VERSION="$(APP_VERSION)" \
-	DMG_SUFFIX="$(DMG_SUFFIX)" \
-	DMG_VOLUME_NAME="$(DMG_VOLUME_NAME)" \
-	"$(SCRIPTS_DIR)/make_dmg.sh"
+format:
+	cargo fmt --manifest-path $(DESKTOP)/src-tauri/Cargo.toml --all
 
-clean:
-	rm -rf "$(BUILD_DIR)" "$(DIST_DIR)" "$(SWIFTPM_DIR)" "$(PACKAGES_DIR)"
+check:
+	cd $(DESKTOP) && npm run typecheck
+	cargo fmt --manifest-path $(DESKTOP)/src-tauri/Cargo.toml --all -- --check
+	cargo clippy --manifest-path $(DESKTOP)/src-tauri/Cargo.toml --all-targets -- -D warnings
+
+package:
+	cd $(DESKTOP) && npm run tauri build -- --bundles nsis -- --locked
