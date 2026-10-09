@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatBytes, matchesQuery, pageSlice, ReadEpoch, safeError, validatePorts, validateSubscription } from '../src/utils.ts';
+import { formatBytes, matchesQuery, pageSlice, ReadEpoch, safeError, terminalProxyCommand, validateLocalPorts, validatePorts, validateRemotePorts, validateSubscription } from '../src/utils.ts';
 
 test('local pagination clamps after deletion and filters, including empty results', () => {
   const rows = Array.from({ length: 101 }, (_, index) => index);
@@ -41,4 +41,25 @@ test('search and measurements handle missing and multilingual values honestly', 
   assert.equal(formatBytes(undefined), '—');
   assert.equal(formatBytes(1024), '1 KiB');
   assert.equal(formatBytes(0), '0 B');
+});
+
+test('远程端口支持关闭监听，并拒绝重复与非法整数', () => {
+  assert.equal(validateRemotePorts(['0', '0', '7890', '0', '0']), null);
+  assert.equal(validateRemotePorts(['80', '1080', '0', '0', '0']), null);
+  for (const values of [['-1', '0'], ['65536', '0'], ['', '0'], ['1.5', '0'], ['7890', '7890']]) assert.ok(validateRemotePorts(values));
+});
+
+test('终端命令使用目标端口和 IPv6 括号，拒绝命令注入字符', () => {
+  assert.equal(terminalProxyCommand('2001:db8::1', 8080, 1080), '$env:HTTP_PROXY="http://[2001:db8::1]:8080"; $env:HTTPS_PROXY=$env:HTTP_PROXY; $env:ALL_PROXY="socks5://[2001:db8::1]:1080"');
+  assert.ok(terminalProxyCommand('router.local', undefined, 1080).includes('$env:HTTP_PROXY=""'));
+  for (const host of ['router";bad', 'router$env', 'https://router', 'router`bad', 'router;bad']) assert.equal(terminalProxyCommand(host, 7890, 7890), '');
+  assert.equal(terminalProxyCommand('router.local', 0, 0), '');
+});
+
+test('本机独立代理端口支持mixed关闭和低端口，控制器仍需独立非特权端口', () => {
+  assert.equal(validateLocalPorts(['80', '1080', '0', '0', '0'], '9090'), null);
+  assert.equal(validateLocalPorts(['0', '0', '0', '0', '0'], '9090'), null);
+  assert.ok(validateLocalPorts(['9090', '0', '0', '0', '0'], '9090'));
+  assert.ok(validateLocalPorts(['80', '0', '0', '0', '0'], '80'));
+  assert.ok(validateLocalPorts(['80', '80', '0', '0', '0'], '9090'));
 });

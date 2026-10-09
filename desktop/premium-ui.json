@@ -2,6 +2,7 @@
   "profile": "product-admin",
   "sourceRoots": ["src"],
   "locale": "zh-CN",
+  "supportedLocales": ["zh-CN", "en"],
   "canonicalMap": "UX-CONTRACT.md",
   "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast", "CRUD"],
   "ownership": { "Select/Listbox": "authored" },
